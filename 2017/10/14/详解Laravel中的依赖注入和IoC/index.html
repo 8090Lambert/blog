@@ -1,0 +1,143 @@
+<!DOCTYPE html><html><head><meta name="generator" content="Hexo 3.9.0"><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content=""><meta name="author" content="8090Lambert"><meta name="google-site-verification" content="NlVkPYQIz-6FEWSYj-zlvN-gVromFNmq2v7hUK_WyyM"><meta name="sogou_site_verification" content="GFRFxFpBEM"><meta property="og:title" content="详解Laravel中的依赖注入和IoC"><meta property="og:description" content="A Programmer With Coding."><meta property="og:site_name" content="8090Lambert | Blog"><meta property="og:type" content="article"><meta property="og:image" content="http://8090lambert.cn"><link rel="alternate" href="/atom.xml" title="8090Lambert | Blog" type="application/atom+xml"><link rel="icon" href="/images/favicon.ico"><title>8090Lambert | Blog</title><link rel="stylesheet" href="/css/bootstrap.min.css"><link rel="stylesheet" href="/css/font-awesome.min.css"><link rel="stylesheet" href="/css/style.css"><script>window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)},ga.l=+new Date,ga("create","UA-146263529-1","auto"),ga("send","pageview")</script><script async src="https://www.google-analytics.com/analytics.js"></script><script>var _hmt=_hmt||[]</script><script async src="//hm.baidu.com/hm.js?dfc9714182f4393d85cb19cc7ad9c231"></script></head><body><nav class="navbar-custom navbar-fixed-top"><div class="container-fluid"><div class="collapse navbar-collapse site-menu"><ul class="nav navbar-nav navbar-right"><li> <a href="/">Home</a></li><li> <a href="/archives">Archives</a></li><li> <a href="/about">About</a></li><li> <a href="mailto:<juzs215@gmail.com>">Email</a></li><li><a href="https://github.com/8090Lambert"><i class="icon fa fa-github fa-lg"></i></a></li></ul></div></div></nav><header class="site-header header-background intro-header" style="background-image:url(/img/banner.jpg)"><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="page-title with-background-image"><p class="title">详解Laravel中的依赖注入和IoC</p><p class="subtitle"></p></div></div></div></div></header><article><div class="container typo"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="post-info text-muted"> <span class="author info">By 8090Lambert</span> <span class="date-time info">On <span class="date">2017-10-14T21:44:30+08:00</span></span></div><div class="post-tags text-muted"> Tags: <a class="tag" href="/tags/php/">#php</a></div><div class="post-content"><p>作为开发者，我们一直在尝试通过使用设计模式和尝试新的健壮型框架来寻找新的方式来编写设计良好且健壮的代码。在本篇文章中，我们将通过 Laravel 的 IoC 组件探索依赖注入设计模式，并了解它如何改进我们的设计。</p><h4 id="依赖注入"><a href="#依赖注入" class="headerlink" title="依赖注入"></a>依赖注入</h4><p>依赖注入一词是由 <a href="http://en.wikipedia.org/wiki/Martin_Fowler" target="_blank" rel="noopener">Martin Fowler</a> 提出的术语，它是将组件注入到应用程序中的一种行为。就像 <a href="http://en.wikipedia.org/wiki/Ward_Cunningham" target="_blank" rel="noopener">Ward Cunningham</a> 说的:</p><blockquote><p>依赖注入是敏捷架构中关键元素。</p></blockquote><p>让我们来看一个例子：</p><pre><code class="angular2html">class UserProvider{
+    protected $connection;
+
+    public function __construct(){
+        $this-&gt;connection = new Connection;
+    }
+
+    public function retrieveByCredentials( array $credentials ){
+        $user = $this-&gt;connection
+                        -&gt;where( &#39;email&#39;, $credentials[&#39;email&#39;])
+                        -&gt;where( &#39;password&#39;, $credentials[&#39;password&#39;])
+                        -&gt;first();
+
+        return $user;
+    }
+}
+</code></pre><p>如果你要测试或者维护这个类，你必须访问数据库的实例来进行一些查询。为了避免必须这样做，你可以将此类与其他类进行 解耦 ，你有三个选项之一，可以将 Connection 类注入而不需要直接使用它。</p><p>将组件注入类时，可以使用以下三个选项之一：</p><h4 id="构造方法注入"><a href="#构造方法注入" class="headerlink" title="构造方法注入"></a>构造方法注入</h4><pre><code class="angular2html">class UserProvider{
+    protected $connection;
+
+    public function __construct( Connection $con ){
+        $this-&gt;connection = $con;
+    }
+    ...
+</code></pre><h4 id="Setter-方法注入"><a href="#Setter-方法注入" class="headerlink" title="Setter 方法注入"></a>Setter 方法注入</h4><p>同样，我们也可以使用 Setter 方法注入依赖关系：</p><pre><code class="angular2html">class UserProvider{
+    protected $connection;
+    public function __construct(){
+        ...
+    }
+
+    public function setConnection( Connection $con ){
+        $this-&gt;connection = $con;
+    }
+    ...
+</code></pre><h4 id="接口注入"><a href="#接口注入" class="headerlink" title="接口注入"></a>接口注入</h4><pre><code class="angular2html">interface ConnectionInjector{
+    public function injectConnection( Connection $con );
+}
+
+class UserProvider implements ConnectionInjector{
+    protected $connection;
+
+    public function __construct(){
+        ...
+    }
+
+    public function injectConnection( Connection $con ){
+        $this-&gt;connection = $con;
+    }
+}
+</code></pre><p>当一个类实现了我们的接口时，我们定义了 <code>injectConnection</code> 方法来解决依赖关系。</p><h4 id="优势"><a href="#优势" class="headerlink" title="优势"></a>优势</h4><p>现在，当测试我们的类时，我们可以模拟依赖类并将其作为参数传递。每个类必须专注于一个特定的任务，而不应该关心解决它们的依赖性。这样，你将拥有一个更专注和可维护的应用程序。</p><p>如果你想了解更多关于 DI 的信息，<a href="http://www.sitepoint.com/managing-class-dependencies-1/" target="_blank" rel="noopener">Alejandro Gervassio</a> 在 本系列 文章中对其进行了广泛而专业的介绍，所以一定要去读这些文章。那么，什么又是 IoC 呢？IoC （控制反转）不需要使用依赖注入，但它可以帮助你有效的管理依赖关系。</p><h3 id="控制反转"><a href="#控制反转" class="headerlink" title="控制反转"></a>控制反转</h3><p>Ioc 是一个简单的组件，可以更加方便地解析依赖项。你可以将对象形容为容器，并且每次解析类时，都会自动注入依赖项。</p><h4 id="Laravel-Ioc"><a href="#Laravel-Ioc" class="headerlink" title="Laravel Ioc"></a>Laravel Ioc</h4><p>当你请求一个对象时， Laravel Ioc 在解决依赖关系的方式上有些特殊：<br><img src="http://8090lambert.cn/images/blog/laravel/01.png" alt=""><br>我们使用一个简单的例子，将在本文中改进它。<br><code>SimpleAuth</code> 类依赖于 <code>FileSessionStorage</code> ，所以我们的代码可能是这样的：</p><pre><code class="angular2html">class FileSessionStorage{
+  public function __construct(){
+    session_start();
+  }
+
+  public function get( $key ){
+    return $_SESSION[$key];
+  }
+
+  public function set( $key, $value ){
+    $_SESSION[$key] = $value;
+  }
+}
+
+class SimpleAuth{
+  protected $session;
+
+  public function __construct(){
+    $this-&gt;session = new FileSessionStorage;
+  }
+}
+
+//创建一个 SimpleAuth
+$auth = new SimpleAuth();
+</code></pre><p>这是一种经典的方法，让我们从使用构造函数注入开始。</p><pre><code class="angular2html">class SimpleAuth{
+  protected $session;
+
+  public function __construct( FileSessionStorage $session ){
+    $this-&gt;session = $session;
+  }
+}
+</code></pre><p>现在我们创建一个对象：</p><pre><code class="angular2html">$auth = new SimpleAuth( new FileSessionStorage() );
+</code></pre><p>现在我想使用 <a href="https://github.com/laravel/framework/tree/master/src/Illuminate/Container" target="_blank" rel="noopener">Laravel Ioc</a> 来管理这一切。<br>因为 <code>Application</code> 类继承自 <code>Container</code> 类，所以你可以通过 App 门面来访问容器。</p><pre><code class="angular2html">App::bind( &#39;FileSessionStorage&#39;, function(){
+    return new FileSessionStorage;
+});
+</code></pre><p> <code>bind</code> 方法第一个参数是要绑定到容器的唯一 ID ，第二个参数是一个回调函数每当执行 FileSessionStorage 类时执行，我们还可以传递一个表示类名的字符串，如下所示。<br><em>Note:</em>如果你查看 Laravel 包时，你将看到绑定有时会分组，比如（ view, view.finder……）。<br>假设我们将会话存储转换为 Mysql 存储，我们的类应该类似于：</p><pre><code class="angular2html">class MysqlSessionStorage{
+
+  public function __construct(){
+    //...
+  }
+
+  public function get($key){
+    // do something
+  }
+
+  public function set( $key, $value ){
+    // do something
+  }
+}
+</code></pre><p>现在我们已经更改了依赖项，我们还需要更改 <code>SimpleAuth</code> 构造函数，并将新对象绑定到容器中！</p><blockquote><p>高级模块不应该依赖于低级模块，两者都应该依赖于抽象对象。<br> 抽象不应该依赖于细节，细节应该取决于抽象。<br><br><br> Robert C. Martin</p></blockquote><p>我们的 <code>SimpleAuth</code> 类不应该关心我们的存储是如何完成的，相反它更应该关注于消费的服务。<br>因此，我们可以抽象实现我们的存储：</p><pre><code class="angular2html">interface SessionStorage{
+  public function get( $key );
+  public function set( $key, $value );
+}
+</code></pre><p>这样我们就可以实现并请求 <code>SessionStorage</code> 接口的实例：</p><pre><code class="angular2html">class FileSessionStorage implements SessionStorage{
+
+  public function __construct(){
+    //...
+  }
+
+  public function get( $key ){
+    //...
+  }
+
+  public function set( $key, $value ){
+    //...
+  }
+}
+
+class MysqlSessionStorage implements SessionStorage{
+
+  public function __construct(){
+    //...
+  }
+
+  public function get( $key ){
+    //...
+  }
+
+  public function set( $key, $value ){
+    //...
+  }
+}
+
+class SimpleAuth{
+
+  protected $session;
+
+  public function __construct( SessionStorage $session ){
+    $this-&gt;session = $session;
+  }
+
+}
+</code></pre><p>如果我们使用 <code>App::make(&#39;SimpleAuth&#39;)</code> 通过容器解析 <code>SimpleAuth</code><br>类，容器将会抛出 <code>BindingResolutionException</code> ，尝试从绑定解析类之后，返回到反射方法并解析所有依赖项</p><pre><code class="angular2html">Uncaught exception &#39;Illuminate\Container\BindingResolutionException&#39; with message &#39;Target [SessionStorage] is not instantiable.&#39;
+</code></pre><p>容器正试图将接口实例化。我们可以为该接口做一个具体的绑定。</p><pre><code class="angular2html">App:bind( &#39;SessionStorage&#39;, &#39;MysqlSessionStorage&#39; );
+</code></pre><p>现在每次我们尝试从容器解析该接口时，我们会得到一个 <code>MysqlSessionStorage</code> 实例。如果我们想要切换我们的存储服务，我们只要变更一下这个绑定。</p><p><em>Note:</em>如果你想要查看一个类是否已经在容器中被绑定，你可以使用 <code>App::bound(&#39;ClassName&#39;)</code> ，或者可以使用 <code>App::bindIf(&#39;ClassName&#39;)</code> 来注册一个还未被注册过的绑定。</p><p>Laravel Ioc 也提供 <code>App::singleton(&#39;ClassName&#39;, &#39;resolver&#39;)</code> 来处理单例的绑定。<br>你也可以使用 <code>App::instance(&#39;ClassName&#39;, &#39;instance&#39;)</code> 来创建单例的绑定。<br>如果容器不能解析依赖项就会抛出 <code>ReflectionException</code> ，但是我们可以使用 <code>App::resolvingAny(Closure)</code> 方法以回调函数的形式来解析任何指定的类型。</p><p><em>Note:</em>如果你为某个类型已经注册了一个解析方式 <code>resolvingAny</code> 方法仍然会被调用，但它会直接返回 <code>bind</code> 方法的返回值。</p><h4 id="小贴士"><a href="#小贴士" class="headerlink" title="小贴士"></a>小贴士</h4><ul><li>这些绑定写在哪儿：<br>如果只是一个小型应用你可以写在一个全局的起始文件 <code>global/start.php</code> 中，但如果项目变得越来越庞大就有必要使用 <a href="https://github.com/laravel/framework/blob/5.8/src/Illuminate/Support/ServiceProvider.php" target="_blank" rel="noopener">Service Provider</a> 。</li><li>测试:<br>当需要快速简易的测试可以考虑使用 <code>php artisan tinker</code> ，它十分强大，且能帮你提升你的 Laravel 测试流程。</li><li>Reflection API：<br>PHP 的 <a href="http://www.sitepoint.com/introspection-and-reflection-in-php/" target="_blank" rel="noopener">Reflection API</a> 是非常强大的，如果你想要深入 Laravel Ioc 你需要熟悉 Reflection API ，可以先看下这个 教程 来获得更多的信息。</li></ul><blockquote><p>Reference： <a href="https://www.sitepoint.com/dependency-injection-laravels-ioc/" target="_blank" rel="noopener">https://www.sitepoint.com/dependency-injection-laravels-ioc/</a></p></blockquote></div><section class="comments" id="comments"><div id="gitment_thread"></div><link rel="stylesheet" href="//unpkg.com/gitment/style/default.css"><script src="//unpkg.com/gitment/dist/gitment.browser.js"></script><script>var gitment=new Gitment({id:"{{ page.date }}",owner:"8090Lambert",repo:"8090Lambert.github.io",oauth:{client_id:"b2e729afbaa762a4cecc",client_secret:"cb9b28cda56154edecbcf76d2ea66e5a0e12c209"}});gitment.render("comments")</script></section></div></div></div></article><footer><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><p class="copyright text-muted"> &copy; 2016 - 2021<span class="with-love"><i class="fa fa-heart"></i></span> <span class="author">8090Lambert</span><script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></p><p class="visit-statistics"> <span id="busuanzi_container_site_pv">本站总访问：<span id="busuanzi_value_site_pv"></span>次 &nbsp;&nbsp;&nbsp;&nbsp;</span></p><p></p></div></div></div></footer><script src="/js/highlight.pack.js"></script><script>document.addEventListener("DOMContentLoaded",function(e){Array.prototype.slice.call(document.getElementsByTagName("pre")).forEach(function(e,t){hljs.highlightBlock(e)})})</script></body></html>

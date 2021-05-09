@@ -1,0 +1,199 @@
+<!DOCTYPE html><html><head><meta name="generator" content="Hexo 3.9.0"><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content=""><meta name="author" content="8090Lambert"><meta name="google-site-verification" content="NlVkPYQIz-6FEWSYj-zlvN-gVromFNmq2v7hUK_WyyM"><meta name="sogou_site_verification" content="GFRFxFpBEM"><meta property="og:title" content="分布式事务原理"><meta property="og:description" content="A Programmer With Coding."><meta property="og:site_name" content="8090Lambert | Blog"><meta property="og:type" content="article"><meta property="og:image" content="http://8090lambert.cn"><link rel="alternate" href="/atom.xml" title="8090Lambert | Blog" type="application/atom+xml"><link rel="icon" href="/images/favicon.ico"><title>8090Lambert | Blog</title><link rel="stylesheet" href="/css/bootstrap.min.css"><link rel="stylesheet" href="/css/font-awesome.min.css"><link rel="stylesheet" href="/css/style.css"><script>window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)},ga.l=+new Date,ga("create","UA-146263529-1","auto"),ga("send","pageview")</script><script async src="https://www.google-analytics.com/analytics.js"></script><script>var _hmt=_hmt||[]</script><script async src="//hm.baidu.com/hm.js?dfc9714182f4393d85cb19cc7ad9c231"></script></head><body><nav class="navbar-custom navbar-fixed-top"><div class="container-fluid"><div class="collapse navbar-collapse site-menu"><ul class="nav navbar-nav navbar-right"><li> <a href="/">Home</a></li><li> <a href="/archives">Archives</a></li><li> <a href="/about">About</a></li><li> <a href="mailto:<juzs215@gmail.com>">Email</a></li><li><a href="https://github.com/8090Lambert"><i class="icon fa fa-github fa-lg"></i></a></li></ul></div></div></nav><header class="site-header header-background intro-header" style="background-image:url(/img/banner.jpg)"><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="page-title with-background-image"><p class="title">分布式事务原理</p><p class="subtitle"></p></div></div></div></div></header><article><div class="container typo"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="post-info text-muted"> <span class="author info">By 8090Lambert</span> <span class="date-time info">On <span class="date">2019-04-15T22:36:45+08:00</span></span></div><div class="post-tags text-muted"> Tags: <a class="tag" href="/tags/http/">#http</a></div><div class="post-content"><h4 id="事务的必要性"><a href="#事务的必要性" class="headerlink" title="事务的必要性"></a>事务的必要性</h4><p>一般提到事务，首先想到的就是 MySQL 的 transaction，但是很多场景，仅仅依靠 MySQL, 还是无法<br>保证业务场景需要的 <code>ACID</code>。<br>以购物场景为例，张三购买物品，账户扣款 100 元的同时，需要保证在下游的会员服务中给该账户增加 100 积分。<br>而扣款的业务和增加积分的业务是在两个不同的应用，正常处理逻辑一般是先扣除100元，然后网络通知积分服务增加100积分。<br>类似这种业务需求，就必须要用分布式事务来保证。<br>如下图：<br><img src="http://8090lambert.cn/images/blog/http/http_06.png" alt=""></p><p>以上过程会存在3个问题：</p><ol><li><p>账号服务在扣款的时候宕机了，这时候可能扣款成功，也可能扣款失败；</p></li><li><p>由于网络稳定性无法保证，通知扣积分服务可能失败，但是扣款成功了；</p></li><li><p>扣款成功，并且通知成功，但是增加积分的时候失败了。</p></li></ol><p>实际上，rocketmq 的事务消息解决的是问题1和问题2这种场景，也就是<em>解决本地事务执行与消息发送的原子性问题</em>。即解决 Producer 执行业务逻辑成功之后投递消息可能失败的场景。</p><p>而对于问题3这种场景，rocketmq提供了消费失败重试的机制。但是如果消费重试依然失败怎么办？rocketmq本身并没有提供解决这种问题的办法，例如如果加积分失败了，则需要回滚事务，实际上增加了业务复杂度，而官方给予的建议是：人工解决。RocketMQ目前暂时没有解决这个问题的原因是：在设计实现消息系统时，我们需要衡量是否值得花这么大的代价来解决这样一个出现概率非常小的问题。</p><h4 id="事务消息的实现思路和过程"><a href="#事务消息的实现思路和过程" class="headerlink" title="事务消息的实现思路和过程"></a>事务消息的实现思路和过程</h4><p>RocketMQ 事务消息的设计流程同样借鉴了两阶段提交理论，通过在执行本地事务前后发送两条消息来保证本地事务与发送消息的原子性，过程如下图：<br><img src="http://8090lambert.cn/images/blog/http/http_07.png" alt=""></p><h4 id="事务消息详细过程说明"><a href="#事务消息详细过程说明" class="headerlink" title="事务消息详细过程说明"></a>事务消息详细过程说明</h4><ol><li>Producer发送Half(prepare)消息到broker；</li><li>half消息发送成功之后执行本地事务；</li><li>（由用户实现）本地事务执行如果成功则返回commit，如果执行失败则返回roll_back。</li><li>Producer发送确认消息到broker（也就是将步骤3执行的结果发送给broker），这里可能broker未收到确认消息，下面分两种情况分析：</li></ol><p><em>如果 broker 收到了确认消息：</em></p><blockquote><ul><li>如果收到的结果是 commit，则 broker 视为整个事务过程执行成功，将消息下发给Conusmer端消费；<br><br><br></li><li>如果收到的结果是 rollback，则 broker 视为本地事务执行失败，broker删除Half消息，不下发给consumer。</li></ul></blockquote><p><em>如果 broker 未收到了确认消息：</em></p><blockquote><p>broker定时回查本地事务的执行结果；<br><br><br>（由用户实现）如果本地事务已经执行则返回commit；如果未执行，则返回rollback；<br><br><br>Producer端回查的结果发送给broker；<br><br><br>broker接收到的如果是commit，则broker视为整个事务过程执行成功，将消息下发给Conusmer端消费；如果是rollback，则broker视为本地事务执行失败，broker删除Half消息，不下发给consumer。如果broker未接收到回查的结果（或者查到的是unknow），则broker会定时进行重复回查，以确保查到最终的事务结果。</p></blockquote><p>补充：对于过程3，如果执行本地事务突然宕机了（相当本地事务执行结果返回unknow），则和broker未收到确认消息的情况一样处理。</p><h4 id="事务消息的使用"><a href="#事务消息的使用" class="headerlink" title="事务消息的使用"></a>事务消息的使用</h4><p>关于rocketmq事务消息如何使用，最好的学习思路是从github上下载下源码，参考demo示例。这里也以官方的demo讲解如何使用（在demo基础上做了一点修改）。</p><h4 id="代码示例"><a href="#代码示例" class="headerlink" title="代码示例"></a>代码示例</h4><p>为了模拟事务执行的异常场景，这里会模拟发送5条事务消息，前三条（msg-1、msg-2、msg-3）对应的本地事务执行结果为unknow（模拟本地事务执行未知的情况）;</p><p>第4条消息（msg-4）返回COMMIT_MESSAGE（模拟本地事务执行成功的情况），第5条消息（msg-5）返回ROLLBACK_MESSAGE（模拟本地事务执行失败的情况）;</p><p>对于前三条消息，模拟回查到的本地事务处理结果分别为UNKNOW，COMMIT_MESSAGE，ROLLBACK_MESSAGE。</p><ul><li><p>发送事务的逻辑：</p><pre><code class="angular2html">public class TransactionProducer {
+  public static void main(String[] args) throws MQClientException, InterruptedException {
+      //事务执行的listener，由用户实现及接口，提供本地事务执行的代码，以及回查本地事务处理结果的逻辑。
+      TransactionListener transactionListener = new TransactionListenerImpl();
+
+      TransactionMQProducer producer = new TransactionMQProducer(&quot;TransactionProducer&quot;);
+      producer.setNamesrvAddr(&quot;localhost:9876&quot;);
+      producer.setTransactionListener(transactionListener);
+      producer.start();
+
+      //模拟发送5条消息
+      for (int i = 1; i &lt; 6; i++) {
+          try {
+              Message msg = new Message(&quot;TransactionTopicTest&quot;, null, &quot;msg-&quot; + i, (&quot;Hello RocketMQ &quot; + i).getBytes(RemotingHelper.DEFAULT_CHARSET));
+              producer.sendMessageInTransaction(msg, null);
+              Thread.sleep(10);
+          } catch (MQClientException | UnsupportedEncodingException e) {
+              e.printStackTrace();
+          }
+      }
+
+      Thread.sleep(Integer.MAX_VALUE);
+      producer.shutdown();
+  }
+}
+</code></pre></li><li><p>提供本地事务执行以及回查本地事务的逻辑：</p><pre><code class="angular2html">public class TransactionListenerImpl implements TransactionListener {
+  private AtomicInteger transactionIndex = new AtomicInteger(0);
+  private AtomicInteger checkTimes = new AtomicInteger(0);
+
+  private ConcurrentHashMap&lt;String, Integer&gt; localTrans = new ConcurrentHashMap&lt;&gt;();
+
+  /**
+   * 本地事务的执行逻辑实现
+   * 模拟5条消息本地事务的处理结果
+   * @param msg Half(prepare) message
+   * @param arg Custom business parameter
+   * @return
+   */
+  @Override
+  public LocalTransactionState executeLocalTransaction(Message msg, Object arg) {
+
+      LocalTransactionState state = null;
+      //msg-4返回COMMIT_MESSAGE
+      if(msg.getKeys().equals(&quot;msg-4&quot;)){
+          state = LocalTransactionState.COMMIT_MESSAGE;
+      }
+      //msg-5返回ROLLBACK_MESSAGE
+      else if(msg.getKeys().equals(&quot;msg-5&quot;)){
+          state = LocalTransactionState.ROLLBACK_MESSAGE;
+      }else{
+          //这里返回unknown的目的是模拟执行本地事务突然宕机的情况（或者本地执行成功发送确认消息失败的场景）
+          state = LocalTransactionState.UNKNOW;
+          //假设3条消息的本地事务结果分别为1，2，3
+          localTrans.put(msg.getKeys(), transactionIndex.incrementAndGet());
+      }
+      System.out.println(&quot;executeLocalTransaction:&quot; + msg.getKeys() + &quot;,excute state:&quot; + state +&quot;,current time：&quot; + new Date());
+      return state;
+  }
+
+  /**
+   * 回查本地事务的代码实现
+   * 第1条消息模拟unknow（例如回查的时候网络依然有问题的情况）。
+   * 第2条消息模拟本地事务处理成功结果COMMIT_MESSAGE。
+   * 第3条消息模拟本地事务处理失败结果需要回滚ROLLBACK_MESSAGE。
+   *
+   * @param msg Check message
+   * @return
+   */
+  @Override
+  public LocalTransactionState checkLocalTransaction(MessageExt msg) {
+      System.out.print(&quot;checkLocalTransaction message key：&quot;+msg.getKeys()+&quot;,current time：&quot; + new Date());
+      //根据key获取到3条消息本地事务的处理结果(实际业务场景一般是通过获取msg中的消息体数据来确定某条消息的本地事务是否执行成功)
+      Integer status = localTrans.get(msg.getKeys());
+      if (null != status) {
+          switch (status) {
+              case 1:
+                  System.out.println(&quot; check result：unknow ，回查次数：&quot;+checkTimes.incrementAndGet());
+                  //依然无法确定本地事务的执行结果，返回unknow，下次会继续回查结果
+                  return LocalTransactionState.UNKNOW;
+              case 2:
+                  //查到本地事务执行成功，返回COMMIT_MESSAGE，producer继续发送确认消息（此逻辑无需自己写，mq本身提供）
+                  //或者查到本地事务执行成功了，但是想回滚掉，则这里需要返回ROLLBACK_MESSAGE，同时写回滚的逻辑，实际如何处理根据业务场景而定
+                  System.out.println(&quot; check result：commit message&quot;);
+                  return LocalTransactionState.COMMIT_MESSAGE;
+              case 3:
+                  //查询到本地事务执行失败，需要回滚消息。
+                  System.out.println(&quot; check result：rollback message&quot;);
+                  return LocalTransactionState.ROLLBACK_MESSAGE;
+          }
+      }
+      return LocalTransactionState.COMMIT_MESSAGE;
+  }
+}
+</code></pre></li></ul><h4 id="运行结果分析"><a href="#运行结果分析" class="headerlink" title="运行结果分析"></a>运行结果分析</h4><p><img src="http://8090lambert.cn/images/blog/http/http_09.png" alt=""></p><p><em>仔细观察日志输出和romcketmq的控制台，我们可以得出如下结论：</em></p><ul><li><p>msg-4、msg-5消息没有执行回查事务消息的逻辑，是因为msg-4、msg-5在本地执行事务的时候已经返回了确定的事务执行结果，因此msg-4、msg-5不会回查；</p></li><li><p>msg-1、msg-2、msg-3在执行完本地事务10s后，都回查了本地事务的结果；</p></li><li><p>msg-2、msg-3只回查了一次，因为这两条消息在回查的时候已经返回了确切的事务执行结果；</p></li><li><p>msg-1回查了5次，并且间隔为1分钟，因为msg-1在回查的事务状态依然为unknow，因此会反复回查，直到超过了回查的默认次数不再回查;</p></li><li><p>对比msg-2和msg-4的消息存储时间，msg-4的存储时间恰好是执行本地事务返回的时间，而msg-2的存储时间则恰好是第一次回查事务结果返回的时间;</p></li></ul><p>关键代码如下：</p><pre><code class="angular2html">public TransactionSendResult sendMessageInTransaction(final Message msg,final TransactionListener tranExecuter, final Object arg){
+       //1.发送prepare消息
+       SendResult sendResult = this.send(msg);
+
+       LocalTransactionState localTransactionState = LocalTransactionState.UNKNOW;
+       Throwable localException = null;
+       switch (sendResult.getSendStatus()) {
+           case SEND_OK: {
+               try {
+                   //2.如果prepare消息发送成功，执行TransactionListener的executeLocalTransaction实现，也就是本地事务方法
+                   localTransactionState = tranExecuter.executeLocalTransaction(msg, arg);
+               } catch (Throwable e) {
+                   localException = e;
+               }
+           }
+           break;
+           case FLUSH_DISK_TIMEOUT:
+           case FLUSH_SLAVE_TIMEOUT:
+           case SLAVE_NOT_AVAILABLE:
+               localTransactionState = LocalTransactionState.ROLLBACK_MESSAGE;
+               break;
+           default:
+               break;
+       }
+       //3.结束事务，其实就是针对前面发送的prepare消息再发送一条确认消息（这条确认消息包含了本地事务执行的结果，这里可以猜测broker接收到该确认消息和之前的prepare消息必然有比较大的关联）
+       this.endTransaction(sendResult, localTransactionState, localException);
+   }
+</code></pre><p>大致思路是：</p><ol><li>发送prepare消息；</li><li>执行实现了TransactionListener的executeLocalTransaction方法，也就是执行本地事务的逻辑；</li><li>结束事务，将过程2得到的本地事务结果通过发送另外一条确认消息告诉broker；</li></ol><p>因此我们这里可以推测：broker必然会根据前后两条消息来确定如何处理该事务消息。</p><h4 id="broker端的处理事务消息回查逻辑"><a href="#broker端的处理事务消息回查逻辑" class="headerlink" title="broker端的处理事务消息回查逻辑"></a>broker端的处理事务消息回查逻辑</h4><pre><code class="angular2html">public class TransactionalMessageCheckService extends ServiceThread {
+    @Override
+    public void run() {
+        //检查间隔，默认一分钟，可配置
+        long checkInterval = brokerController.getBrokerConfig().getTransactionCheckInterval();
+        while (!this.isStopped()) {
+            try {
+                //等待一分钟，以实现每一分钟回查需要的事务消息结果
+                waitPoint.await(interval, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                log.error(&quot;Interrupted&quot;, e);
+            } finally {
+                //处理事务消息回查的核心逻辑方法
+                brokerController.getTransactionalMessageService().check(timeout, checkMax,this.brokerController.getTransactionalMessageCheckListener());
+            }
+        }
+    }
+}
+
+public class TransactionalMessageServiceImpl implements TransactionalMessageService {
+
+    public void check(long transactionTimeout, int transactionCheckMax,AbstractTransactionalMessageCheckListener listener) {
+            //获取到所有的RMQ_SYS_TRANS_HALF_TOPIC消息队列（prepare消息）
+            Set&lt;MessageQueue&gt; msgQueues = transactionalMessageBridge.fetchMessageQueues(&quot;RMQ_SYS_TRANS_HALF_TOPIC&quot;);
+            for (MessageQueue messageQueue : msgQueues) {
+                //从RMQ_SYS_TRANS_OP_HALF_TOPIC消息队列中获取到prepare消息对应的op消息（确认消息）
+                MessageQueue opQueue = getOpQueue(messageQueue);
+                //prepare消息的offset
+                long halfOffset = transactionalMessageBridge.fetchConsumeOffset(messageQueue);
+                //prepare消息
+                MessageExt msgExt = getHalfMsg(messageQueue, i);
+                //中间会有一堆的逻辑判断用于是否需要回查事务状态。
+                //例如：是否超过了回查的次数（默认五次）、消息是否已经失效了、对应的op消息是否已经处理了等。
+                if (isNeedCheck) {
+                    //交给线程池异步处理回调查询事务的状态。
+                    listener.resolveHalfMsg(msgExt);
+                }
+            }
+    }
+}
+</code></pre><p>大概的处理思路是：<br>broker维护一个死循环，每一分钟执行一次，broker通过使用两个内部队列：<br>RMQ_SYS_TRANS_HALF_TOPIC、RMQ_SYS_TRANS_OP_HALF_TOPIC来存储事务消息推进状态，<br>服务端通过比对两个队列的差值来找到尚未提交的超时事务，调用Producer端，用来查询事务处理结果。</p><h4 id="Producer端接收broker回查的逻辑"><a href="#Producer端接收broker回查的逻辑" class="headerlink" title="Producer端接收broker回查的逻辑"></a>Producer端接收broker回查的逻辑</h4><pre><code class="angular2html">//接收broker的回调，回查本地事务情况，进行相应处理
+@Override
+public void checkTransactionState(final String addr, final MessageExt msg,final CheckTransactionStateRequestHeader header) {
+    //处理broker检查本地事务处理情况的回调任务
+    Runnable request = new Runnable() {
+        @Override
+        public void run() {
+                //执行TransactionListener实现的checkLocalTransaction方法，检查本地事务处理情况。
+                LocalTransactionState localTransactionState = transactionCheckListener.checkLocalTransaction(message);
+                //将检查本地事务处理情况再次发送给broker。
+                this.processTransactionState(localTransactionState,group,exception);
+        }
+
+        //处理本地事务处理的结果反馈
+        private void processTransactionState(final LocalTransactionState localTransactionState,final String producerGroup,final Throwable exception) {
+            final EndTransactionRequestHeader thisHeader = new EndTransactionRequestHeader();
+            ...
+            根据检查到的本地事务执行的不同结果封装成不同的处理类型发送给broker
+            switch (localTransactionState) {
+                case COMMIT_MESSAGE:
+                    thisHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_COMMIT_TYPE);
+                    break;
+                case ROLLBACK_MESSAGE:
+                    thisHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_ROLLBACK_TYPE);
+                    break;
+                case UNKNOW:
+                    thisHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_NOT_TYPE);
+                    break;
+                default:
+                    break;
+            }
+            //结果反馈给broker
+            DefaultMQProducerImpl.this.mQClientFactory.getMQClientAPIImpl().endTransactionOneway(brokerAddr,thisHeader,remark,3000);
+        }
+    };
+    //提交任务到线程池
+    this.checkExecutor.submit(request);
+}
+</code></pre><p>大致的处理思路是：<br>Producer端一个线程池维护执行TransactionListener的executeLocalTransaction实现，也就是本地事务方法的任务。将查询到的本地事务结果反馈给broker端，broker来决定对事务消息如何处理。</p></div><section class="comments" id="comments"><div id="gitment_thread"></div><link rel="stylesheet" href="//unpkg.com/gitment/style/default.css"><script src="//unpkg.com/gitment/dist/gitment.browser.js"></script><script>var gitment=new Gitment({id:"{{ page.date }}",owner:"8090Lambert",repo:"8090Lambert.github.io",oauth:{client_id:"b2e729afbaa762a4cecc",client_secret:"cb9b28cda56154edecbcf76d2ea66e5a0e12c209"}});gitment.render("comments")</script></section></div></div></div></article><footer><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><p class="copyright text-muted"> &copy; 2016 - 2021<span class="with-love"><i class="fa fa-heart"></i></span> <span class="author">8090Lambert</span><script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></p><p class="visit-statistics"> <span id="busuanzi_container_site_pv">本站总访问：<span id="busuanzi_value_site_pv"></span>次 &nbsp;&nbsp;&nbsp;&nbsp;</span></p><p></p></div></div></div></footer><script src="/js/highlight.pack.js"></script><script>document.addEventListener("DOMContentLoaded",function(e){Array.prototype.slice.call(document.getElementsByTagName("pre")).forEach(function(e,t){hljs.highlightBlock(e)})})</script></body></html>

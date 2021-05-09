@@ -1,0 +1,134 @@
+<!DOCTYPE html><html><head><meta name="generator" content="Hexo 3.9.0"><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content=""><meta name="author" content="8090Lambert"><meta name="google-site-verification" content="NlVkPYQIz-6FEWSYj-zlvN-gVromFNmq2v7hUK_WyyM"><meta name="sogou_site_verification" content="GFRFxFpBEM"><meta property="og:title" content="PHP序列化的漏洞"><meta property="og:description" content="A Programmer With Coding."><meta property="og:site_name" content="8090Lambert | Blog"><meta property="og:type" content="article"><meta property="og:image" content="http://8090lambert.cn"><link rel="alternate" href="/atom.xml" title="8090Lambert | Blog" type="application/atom+xml"><link rel="icon" href="/images/favicon.ico"><title>8090Lambert | Blog</title><link rel="stylesheet" href="/css/bootstrap.min.css"><link rel="stylesheet" href="/css/font-awesome.min.css"><link rel="stylesheet" href="/css/style.css"><script>window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)},ga.l=+new Date,ga("create","UA-146263529-1","auto"),ga("send","pageview")</script><script async src="https://www.google-analytics.com/analytics.js"></script><script>var _hmt=_hmt||[]</script><script async src="//hm.baidu.com/hm.js?dfc9714182f4393d85cb19cc7ad9c231"></script></head><body><nav class="navbar-custom navbar-fixed-top"><div class="container-fluid"><div class="collapse navbar-collapse site-menu"><ul class="nav navbar-nav navbar-right"><li> <a href="/">Home</a></li><li> <a href="/archives">Archives</a></li><li> <a href="/about">About</a></li><li> <a href="mailto:<juzs215@gmail.com>">Email</a></li><li><a href="https://github.com/8090Lambert"><i class="icon fa fa-github fa-lg"></i></a></li></ul></div></div></nav><header class="site-header header-background intro-header" style="background-image:url(/img/banner.jpg)"><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="page-title with-background-image"><p class="title">PHP序列化的漏洞</p><p class="subtitle"></p></div></div></div></div></header><article><div class="container typo"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="post-info text-muted"> <span class="author info">By 8090Lambert</span> <span class="date-time info">On <span class="date">2017-02-18T17:04:19+08:00</span></span></div><div class="post-tags text-muted"> Tags: <a class="tag" href="/tags/php/">#php</a></div><div class="post-content"><h2 id="0-前言"><a href="#0-前言" class="headerlink" title="0.前言"></a>0.前言</h2><p>对象的序列化和反序列化作用就不再赘述,php中序列化的结果是一个php自定义的字符串格式,有点类似json.</p><p>我们在任何语言中设计对象的序列化和反序列化都需要解决几个问题</p><p>把某个对象序列化之后,序列化的结果有自描述的功能(从序列化的结果中知道这个对象的具体类型,<br>知道类型还不够,当然还需要知道这个类型所对应具体的值).</p><p>时间性能问题:在某些性能敏感的场景下,对象序列化就不能拖后腿,例如:高性能服务(我经常使用protobuf来序列化).</p><p>空间性能问题:序列化之后的结果不能太长,比如内存中一个int对象,序列化之后数据长度变成了10倍int的长度,那这个序列化算法是有问题的.</p><p>本文仅仅从php代码角度来解释php中序列化和反序列化的过程.,记住一点序列化和反序列化操作的仅仅是对象的数据,这一点有面向对象开发经验的都应该容易理解.</p><h3 id="1-序列化serialize和反序列化方法unserialize"><a href="#1-序列化serialize和反序列化方法unserialize" class="headerlink" title="1.序列化serialize和反序列化方法unserialize"></a>1.序列化serialize和反序列化方法unserialize</h3><p>php原生提供了对象序列化功能. 用起来也非常简单,就两个接口.</p><pre><code class="php">class fobnn
+{
+    public  $hack_id;
+    private $hack_name;
+    public function __construct($name,$id)
+    {
+        $this-&gt;hack_name = $name;
+        $this-&gt;hack_id = $id;
+    }
+    public function print()
+    {
+        echo $this-&gt;hack_name.PHP_EOL;
+    }
+}
+
+$obj = new fobnn(&#39;fobnn&#39;,1);
+$obj-&gt;print();
+$serializedstr = serialize($obj); //通过serialize接口序列化
+echo $serializedstr.PHP_EOL;;
+$toobj = unserialize($serializedstr);//通过unserialize反序列化
+$toobj-&gt;print();
+</code></pre><pre><code class="php">fobnn
+O:5:&quot;fobnn&quot;:2:{s:7:&quot;hack_id&quot;;i:1;s:16:&quot;fobnnhack_name&quot;;s:5:&quot;fobnn&quot;;}
+fobnn
+</code></pre><p>看到第二行的输出,这个字符串就是序列化的结果,这个结构其实很容读懂,可以发现是通过对象名称/成员名称来映射的,当然不同访问权限的成员序列化之后的标签名称略有不同.</p><p>根据我上面讲到的3个问题,那么我们可以来看看</p><p>1.自描述功能</p><pre><code class="php"> O:5:&quot;fobnn&quot;:2 
+</code></pre><p>其中o就表示了 object 类型,且类型名称为fobnn, 采用这种格式,后面的2表示了有2个成员对象.</p><p>关于成员对象,其实也是同一套子描述,这是一个递归的定义.</p><p>自描述的功能主要是通过字符串记录对象和成员的名称来实现.</p><p>2.性能问题</p><p>php序列化的时间性能本文就不分析了,详见后面,但序列化结果其实类似json/bson定义的协议,有协议头,协议头说明了类型,协议体则说明了类型所对应的值,并不会对序列化结果进行压缩.</p><h3 id="2-反序列化中的魔术方法"><a href="#2-反序列化中的魔术方法" class="headerlink" title="2.反序列化中的魔术方法"></a>2.反序列化中的魔术方法</h3><p>对应上述说的第二个问题,其实php中也有解决方法,一种是通过魔术方法,第二种则是自定义序列化函数.先来介绍下魔术方法 <strong>sleep 和</strong> wakeup</p><blockquote><p><a href="http://php.net/manual/en/language.oop5.magic.php#object.sleep" target="_blank" rel="noopener">http://php.net/manual/en/language.oop5.magic.php#object.sleep</a><br><a href="http://php.net/manual/en/language.oop5.magic.php#object.wakeup" target="_blank" rel="noopener">http://php.net/manual/en/language.oop5.magic.php#object.wakeup</a></p></blockquote><pre><code class="php">class fobnn
+{
+    public  $hack_id;
+    private $hack_name;
+    public function __construct($name,$id)
+    {
+        $this-&gt;hack_name = $name;
+        $this-&gt;hack_id = $id;
+    }
+    public function print()
+    {
+        echo $this-&gt;hack_name.PHP_EOL;
+    }
+
+    public  function __sleep()
+    {
+        return array(&quot;hack_name&quot;);
+    }
+
+    public  function __wakeup()
+    {
+        $this-&gt;hack_name = &#39;haha&#39;;
+    }
+}
+
+$obj = new fobnn(&#39;fobnn&#39;,1);
+$obj-&gt;print();
+$serializedstr = serialize($obj);
+echo $serializedstr.PHP_EOL;;
+$toobj = unserialize($serializedstr);
+$toobj-&gt;print();
+</code></pre><pre><code class="php">fobnn
+O:5:&quot;fobnn&quot;:1:{s:16:&quot;fobnnhack_name&quot;;s:5:&quot;fobnn&quot;;}
+haha
+</code></pre><p>在序列化之前会先调用 __sleep 返回的是一个需要序列化的成员名称数组,通过这样我们就可以控制需要序列化的数据,案例中我只返回了hack_name,可以看到结果中只序列化了hack_name成员.</p><p>在序列化完成之后,会跳用 __wakeup 在这里我们可以做一些后续工作,例如重连数据库之类的.</p><h3 id="3-自定义Serializable接口"><a href="#3-自定义Serializable接口" class="headerlink" title="3.自定义Serializable接口"></a>3.自定义Serializable接口</h3><p>自定义序列化接口 <a href="http://php.net/manual/en/class.serializable.php" target="_blank" rel="noopener">http://php.net/manual/en/class.serializable.php</a></p><pre><code class="php">interface Serializable {
+abstract public function serialize()
+abstract public function unserialize(string $serialized)
+}
+</code></pre><p>通过这个接口我们可以自定义序列化和反序列化的行为,这个功能主要可以用来自定义我们的序列化格式.</p><pre><code class="php">class fobnn implements Serializable
+{
+    public  $hack_id;
+    private $hack_name;
+    public function __construct($name,$id)
+    {
+        $this-&gt;hack_name = $name;
+        $this-&gt;hack_id = $id;
+    }
+    public function print()
+    {
+        echo $this-&gt;hack_name.PHP_EOL;
+    }
+
+    public  function __sleep()
+    {
+        return array(&#39;hack_name&#39;);
+    }
+
+    public  function __wakeup()
+    {
+        $this-&gt;hack_name = &#39;haha&#39;;
+    }
+
+    public function serialize()
+    {
+        return json_encode(array(&#39;id&#39; =&gt; $this-&gt;hack_id ,&#39;name&#39;=&gt;$this-&gt;hack_name ));
+    }
+
+    public function unserialize($var)
+    {
+        $array = json_decode($var,true);
+        $this-&gt;hack_name = $array[&#39;name&#39;];
+        $this-&gt;hack_id = $array[&#39;id&#39;];
+    }
+}
+
+$obj = new fobnn(&#39;fobnn&#39;,1);
+$obj-&gt;print();
+$serializedstr = serialize($obj);
+echo $serializedstr.PHP_EOL;;
+$toobj = unserialize($serializedstr);
+$toobj-&gt;print();
+</code></pre><pre><code class="php">fobnn
+C:5:&quot;fobnn&quot;:23:{{"id":1,"name":"fobnn"}}
+fobnn
+</code></pre><p>当使用了自定义序列化接口之后,我们的魔术方法就没用了.</p><h3 id="4-PHP动态类型和PHP反序列化"><a href="#4-PHP动态类型和PHP反序列化" class="headerlink" title="4.PHP动态类型和PHP反序列化"></a>4.PHP动态类型和PHP反序列化</h3><p>既然上文中提到的自描述功能,那么序列化结果中保存了对象的类型,且php是动态类型语言,那么我们就可以来做个简单的实验.</p><pre><code class="php">class fobnn
+{
+    public $hack_id;
+    public $hack_name;
+    public function __construct($name,$id)
+    {
+        $this-&gt;hack_name = $name;
+        $this-&gt;hack_id = $id;
+    }
+    public function print()
+    {
+        var_dump($this-&gt;hack_name);
+    }
+}
+
+$obj = new fobnn(&#39;fobnn&#39;,1);
+$obj-&gt;print();
+$serializedstr = serialize($obj);
+echo $serializedstr.PHP_EOL;;
+$toobj = unserialize($serializedstr);
+$toobj-&gt;print();
+
+$toobj2 = unserialize(&quot;O:5:\&quot;fobnn\&quot;:2:{s:7:\&quot;hack_id\&quot;;i:1;s:9:\&quot;hack_name\&quot;;i:12345;}&quot;);
+$toobj2-&gt;print();
+</code></pre><p>我们修改hack_name反序列化的结果为int类型，<code>i:12345</code>，结果如下：</p><blockquote><p>string(5) “fobnn”<br>O:5:”fobnn”:2:{s:7:”hack_id”;i:1;s:9:”hack_name”;s:5:”fobnn”;}<br>string(5) “fobnn”<br>int(12345)</p></blockquote><p>可以发现,对象成功序列化回来了!并且可以正常工作!. 当然php的这种机制提供了灵活多变的语法,但也引入了安全风险. 后续继续分析php序列化和反序列化特性带来的安全问题.</p></div><section class="comments" id="comments"><div id="gitment_thread"></div><link rel="stylesheet" href="//unpkg.com/gitment/style/default.css"><script src="//unpkg.com/gitment/dist/gitment.browser.js"></script><script>var gitment=new Gitment({id:"{{ page.date }}",owner:"8090Lambert",repo:"8090Lambert.github.io",oauth:{client_id:"b2e729afbaa762a4cecc",client_secret:"cb9b28cda56154edecbcf76d2ea66e5a0e12c209"}});gitment.render("comments")</script></section></div></div></div></article><footer><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><p class="copyright text-muted"> &copy; 2016 - 2021<span class="with-love"><i class="fa fa-heart"></i></span> <span class="author">8090Lambert</span><script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></p><p class="visit-statistics"> <span id="busuanzi_container_site_pv">本站总访问：<span id="busuanzi_value_site_pv"></span>次 &nbsp;&nbsp;&nbsp;&nbsp;</span></p><p></p></div></div></div></footer><script src="/js/highlight.pack.js"></script><script>document.addEventListener("DOMContentLoaded",function(e){Array.prototype.slice.call(document.getElementsByTagName("pre")).forEach(function(e,t){hljs.highlightBlock(e)})})</script></body></html>

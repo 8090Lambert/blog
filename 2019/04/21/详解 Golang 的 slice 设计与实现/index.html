@@ -1,0 +1,240 @@
+<!DOCTYPE html><html><head><meta name="generator" content="Hexo 3.9.0"><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content=""><meta name="author" content="8090Lambert"><meta name="google-site-verification" content="NlVkPYQIz-6FEWSYj-zlvN-gVromFNmq2v7hUK_WyyM"><meta name="sogou_site_verification" content="GFRFxFpBEM"><meta property="og:title" content="详解 Golang 的 slice 设计与实现"><meta property="og:description" content="A Programmer With Coding."><meta property="og:site_name" content="8090Lambert | Blog"><meta property="og:type" content="article"><meta property="og:image" content="http://8090lambert.cn"><link rel="alternate" href="/atom.xml" title="8090Lambert | Blog" type="application/atom+xml"><link rel="icon" href="/images/favicon.ico"><title>8090Lambert | Blog</title><link rel="stylesheet" href="/css/bootstrap.min.css"><link rel="stylesheet" href="/css/font-awesome.min.css"><link rel="stylesheet" href="/css/style.css"><script>window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)},ga.l=+new Date,ga("create","UA-146263529-1","auto"),ga("send","pageview")</script><script async src="https://www.google-analytics.com/analytics.js"></script><script>var _hmt=_hmt||[]</script><script async src="//hm.baidu.com/hm.js?dfc9714182f4393d85cb19cc7ad9c231"></script></head><body><nav class="navbar-custom navbar-fixed-top"><div class="container-fluid"><div class="collapse navbar-collapse site-menu"><ul class="nav navbar-nav navbar-right"><li> <a href="/">Home</a></li><li> <a href="/archives">Archives</a></li><li> <a href="/about">About</a></li><li> <a href="mailto:<juzs215@gmail.com>">Email</a></li><li><a href="https://github.com/8090Lambert"><i class="icon fa fa-github fa-lg"></i></a></li></ul></div></div></nav><header class="site-header header-background intro-header" style="background-image:url(/img/banner.jpg)"><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="page-title with-background-image"><p class="title">详解 Golang 的 slice 设计与实现</p><p class="subtitle"></p></div></div></div></div></header><article><div class="container typo"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="post-info text-muted"> <span class="author info">By 8090Lambert</span> <span class="date-time info">On <span class="date">2019-04-21T14:50:13+08:00</span></span></div><div class="post-tags text-muted"> Tags: <a class="tag" href="/tags/go/">#go</a></div><div class="post-content"><h3 id="Slice-结构体"><a href="#Slice-结构体" class="headerlink" title="Slice 结构体"></a>Slice 结构体</h3><p>slice 是 golang 中利用指针指向某个连续片段的数组，所以本质上它算是引用类型。<br>一个 <code>slice</code> 在 golang 中占用24个 bytes</p><pre><code>a = make([]int, 0)
+unsafe.Sizeof(a)    // 24
+
+var c int
+unsafe.Sizeof(c)    // 8, 一个 int 在 golang 中占用 8 个bytes(本机是64位操作系统)
+</code></pre><p>在 runtime 的 slice.go 中，定义了 slice 的 struct</p><pre><code>type slice struct {
+    array unsafe.Pointer    // 8 bytes
+    len   int                // 8 bytes
+    cap   int                // 8 bytes
+    // 确认了，slice 的大小 24
+}
+</code></pre><ul><li>array 是指向真实的数组的 ptr</li><li>len 是指切片已有元素个数</li><li>cap 是指当前分配的空间</li></ul><h3 id="准备调试"><a href="#准备调试" class="headerlink" title="准备调试"></a>准备调试</h3><p>简单准备一段程序，看看 golang 是如何初始化一个切片的</p><pre><code>package main
+
+import &quot;fmt&quot;
+
+func main() {
+    a := make([]int, 0)
+    a = append(a, 2, 3, 4)
+    fmt.Println(a)
+}
+</code></pre><h3 id="Slice-初始化"><a href="#Slice-初始化" class="headerlink" title="Slice 初始化"></a>Slice 初始化</h3><p>使用 <code>dlv</code> 调试，反汇编后：</p><pre><code>(dlv) disassemble
+TEXT main.main(SB) /Users/such/gomodule/runtime/main.go
+main.go:5       0x10b70f0       65488b0c2530000000              mov rcx, qword ptr gs:[0x30]
+main.go:5       0x10b70f9       488d4424e8                      lea rax, ptr [rsp-0x18]
+main.go:5       0x10b70fe       483b4110                        cmp rax, qword ptr [rcx+0x10]
+main.go:5       0x10b7102       0f8637010000                    jbe 0x10b723f      main.go:5       0x10b7108*      4881ec98000000                  sub rsp, 0x98
+main.go:5       0x10b710f       4889ac2490000000                mov qword ptr [rsp+0x90], rbp
+main.go:5       0x10b7117       488dac2490000000                lea rbp, ptr [rsp+0x90]
+main.go:6       0x10b711f       488d051a0e0100                  lea rax, ptr [rip+0x10e1a]
+main.go:6       0x10b7126       48890424                        mov qword ptr [rsp], rax
+main.go:6       0x10b712a       0f57c0                          xorps xmm0, xmm0
+main.go:6       0x10b712d       0f11442408                      movups xmmword ptr [rsp+0x8], xmm0
+main.go:6       0x10b7132       e8b99af8ff                      ** call $runtime.makeslice **
+main.go:6       0x10b7137       488b442418                      mov rax, qword ptr [rsp+0x18]
+main.go:6       0x10b713c       4889442460                      mov qword ptr [rsp+0x60], rax
+main.go:6       0x10b7141       0f57c0                          xorps xmm0, xmm0
+main.go:6       0x10b7144       0f11442468                      movups xmmword ptr [rsp+0x68], xmm0
+...
+</code></pre><p>在一堆指令中，看到 <code>call $runtime.makeslice</code> 的调用应该是初始化 slice</p><pre><code>func makeslice(et *_type, len, cap int) unsafe.Pointer {
+    mem, overflow := math.MulUintptr(et.size, uintptr(cap))
+    if overflow || mem &gt; maxAlloc || len &lt; 0 || len &gt; cap {
+        // NOTE: Produce a &#39;len out of range&#39; error instead of a
+        // &#39;cap out of range&#39; error when someone does make([]T, bignumber).
+        // &#39;cap out of range&#39; is true too, but since the cap is only being
+        // supplied implicitly, saying len is clearer.
+        // See golang.org/issue/4085.
+        mem, overflow := math.MulUintptr(et.size, uintptr(len))
+        if overflow || mem &gt; maxAlloc || len &lt; 0 {
+            panicmakeslicelen()
+        }
+        panicmakeslicecap()
+    }
+
+    return mallocgc(mem, et, true)
+}
+</code></pre><p>makeslice 最后返回真正值存储的数组域的内存地址，函数中 <code>uintptr()</code> 是什么呢？</p><pre><code>println(uintptr(0), ^uintptr(0))
+// 0    18446744073709551615    为什么按位异或后是这个数?
+
+var c int = 1
+println(^c, ^uint64(0))
+// -2    18446744073709551615
+</code></pre><p>从这几行代码验证，有符号的1，二进制为：0001，异或后：1110，最高位1是负数，表示-2；<br>uint64二进制：0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000<br>异或后：1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111<br>因为无符号的，转换成10进制，就是 2 ^ 64 - 1 = 18446744073709551615<br>。所以，其实^uintptr(0) 就是指当前机器（32位，uint32；64位，uint64）的最大值。<br>我们可以打印下现在的 <code>a</code></p><pre><code>(dlv) p a
+[]int len: 1, cap: 0, [0]
+</code></pre><h3 id="Slice-扩容"><a href="#Slice-扩容" class="headerlink" title="Slice 扩容"></a>Slice 扩容</h3><pre><code>=&gt;      main.go:7       0x10b7149       eb00                            jmp 0x10b714b
+        main.go:7       0x10b714b       488d0dee0d0100                  lea rcx, ptr [rip+0x10dee]
+        main.go:7       0x10b7152       48890c24                        mov qword ptr [rsp], rcx
+        main.go:7       0x10b7156       4889442408                      mov qword ptr [rsp+0x8], rax
+        main.go:7       0x10b715b       0f57c0                          xorps xmm0, xmm0
+        main.go:7       0x10b715e       0f11442410                      movups xmmword ptr [rsp+0x10], xmm0
+        main.go:7       0x10b7163       48c744242003000000              mov qword ptr [rsp+0x20], 0x3
+        main.go:7       0x10b716c       e84f9bf8ff                      call $runtime.growslice
+        main.go:7       0x10b7171       488b442428                      mov rax, qword ptr [rsp+0x28]
+        main.go:7       0x10b7176       488b4c2430                      mov rcx, qword ptr [rsp+0x30]
+        main.go:7       0x10b717b       488b542438                      mov rdx, qword ptr [rsp+0x38]
+        main.go:7       0x10b7180       4883c103                        add rcx, 0x3
+        main.go:7       0x10b7184       eb00                            jmp 0x10b7186
+        main.go:7       0x10b7186       48c70002000000                  mov qword ptr [rax], 0x2
+        main.go:7       0x10b718d       48c7400803000000                mov qword ptr [rax+0x8], 0x3
+        main.go:7       0x10b7195       48c7401004000000                mov qword ptr [rax+0x10], 0x4
+        main.go:7       0x10b719d       4889442460                      mov qword ptr [rsp+0x60], rax
+        main.go:7       0x10b71a2       48894c2468                      mov qword ptr [rsp+0x68], rcx
+        main.go:7       0x10b71a7       4889542470                      mov qword 
+        ...
+</code></pre><p>在对 slice 做 append 的时候，其实是调用了 <code>call runtime.growslice</code>，看看做了什么：</p><pre><code>func growslice(et *_type, old slice, cap int) slice {
+    if cap &lt; old.cap {
+        panic(errorString(&quot;growslice: cap out of range&quot;))
+    }
+
+    if et.size == 0 {
+        // append should not create a slice with nil pointer but non-zero len.
+        // We assume that append doesn&#39;t need to preserve old.array in this case.
+        return slice{unsafe.Pointer(&amp;zerobase), old.len, cap}
+    }
+
+    newcap := old.cap
+    doublecap := newcap + newcap
+    if cap &gt; doublecap {
+        newcap = cap
+    } else {
+        if old.len &lt; 1024 {
+            newcap = doublecap
+        } else {
+            for 0 &lt; newcap &amp;&amp; newcap &lt; cap {
+                newcap += newcap / 4
+            }
+            if newcap &lt;= 0 {
+                newcap = cap
+            }
+        }
+    }
+
+    var overflow bool
+    var lenmem, newlenmem, capmem uintptr
+    // Specialize for common values of et.size.
+    // For 1 we don&#39;t need any division/multiplication.
+    // For sys.PtrSize, compiler will optimize division/multiplication into a shift by a constant.
+    // For powers of 2, use a variable shift.
+    switch {
+    case et.size == 1:
+        lenmem = uintptr(old.len)
+        newlenmem = uintptr(cap)
+        capmem = roundupsize(uintptr(newcap))
+        overflow = uintptr(newcap) &gt; maxAlloc
+        newcap = int(capmem)
+    case et.size == sys.PtrSize:
+        lenmem = uintptr(old.len) * sys.PtrSize
+        newlenmem = uintptr(cap) * sys.PtrSize
+        capmem = roundupsize(uintptr(newcap) * sys.PtrSize)
+        overflow = uintptr(newcap) &gt; maxAlloc/sys.PtrSize
+        newcap = int(capmem / sys.PtrSize)
+    case isPowerOfTwo(et.size):
+        var shift uintptr
+        if sys.PtrSize == 8 {
+            // Mask shift for better code generation.
+            shift = uintptr(sys.Ctz64(uint64(et.size))) &amp; 63
+        } else {
+            shift = uintptr(sys.Ctz32(uint32(et.size))) &amp; 31
+        }
+        lenmem = uintptr(old.len) &lt;&lt; shift
+        newlenmem = uintptr(cap) &lt;&lt; shift
+        capmem = roundupsize(uintptr(newcap) &lt;&lt; shift)
+        overflow = uintptr(newcap) &gt; (maxAlloc &gt;&gt; shift)
+        newcap = int(capmem &gt;&gt; shift)
+    default:
+        lenmem = uintptr(old.len) * et.size
+        newlenmem = uintptr(cap) * et.size
+        capmem, overflow = math.MulUintptr(et.size, uintptr(newcap))
+        capmem = roundupsize(capmem)
+        newcap = int(capmem / et.size)
+    }
+
+    if overflow || capmem &gt; maxAlloc {
+        panic(errorString(&quot;growslice: cap out of range&quot;))
+    }
+
+    var p unsafe.Pointer
+    if et.ptrdata == 0 {
+        // 申请内存
+        p = mallocgc(capmem, nil, false)
+
+        // 清除未使用的地址
+        memclrNoHeapPointers(add(p, newlenmem), capmem-newlenmem)
+    } else {
+        p = mallocgc(capmem, et, true)
+        if lenmem &gt; 0 &amp;&amp; writeBarrier.enabled {
+            bulkBarrierPreWriteSrcOnly(uintptr(p), uintptr(old.array), lenmem)
+        }
+    }
+    // 拷贝大小为 lenmem 个btyes，从old.array到p
+    memmove(p, old.array, lenmem)
+
+    return slice{p, old.len, newcap}
+</code></pre><p>具体扩容的策略：</p><ul><li>如果要申请的容量（cap）大于 2 倍的原容量（old.cap）或者 原容量 &lt; 1024 ，那么newcap = old.cap + old.cap</li><li>否则，计算 <code>newcap += newcap / 4</code>，知道 newcap 不小于要申请的容量，如果溢出，newcap = cap（要申请的容量）</li></ul><p>扩容完成后就开始根据 t.size 的大小，重新计算地址，其中新 slice 的 <code>len</code> 为原 slice 的 <code>cap</code> (只有 slice 的 len 超过 cap，才需要扩容)。<br>接着申请 <code>capmem</code> 大小的内存，从 old.array 拷贝 <code>lenmem</code> 个 bytes (就是原 slice 整个拷贝，lenmem 就是计算的原切片的大小)到 <code>p</code>。</p><pre><code>a := make([]int, 0)
+a = append(a, 1)
+println(&quot;1 times:&quot;, len(a), cap(a))    // 1 times: 1 1
+
+a = append(a, 2, 3)
+println(&quot;2 times:&quot;, len(a), cap(a))    // 2 times: 3 4
+
+a = append(a, 4)
+println(&quot;3 times:&quot;, len(a), cap(a))    // 3 times: 4 4
+</code></pre><p>可以看出:</p><ol><li>如果 <code>append</code> 后的 <code>len</code> 大于 <code>cap</code> 的2倍，即扩大至大于 <code>len</code> 的第一个2的倍数</li><li>如果 <code>append</code> 后的 <code>len</code> 大于 <code>cap</code> 且小于 <code>cap</code> 的两倍，<code>cap</code>扩大至2倍</li><li>如果 <code>append</code> 后的 <code>len</code> 小于 <code>cap</code>，直接追加</li></ol><h3 id="Slice污染"><a href="#Slice污染" class="headerlink" title="Slice污染"></a>Slice污染</h3><p>使用 <code>slice</code>，也许不知不觉中就会造成一些问题。</p><pre><code>a := []int{1, 2, 3, 4, 5}
+shadow := a[1:3]
+shadow = append(shadow, 100)
+fmt.Println(shadow, a)
+// [2 3 100] [1 2 3 100 5]
+</code></pre><p>结果很意外，但也是符合逻辑。a 的结构体中 <code>array</code> 是指向数组 <code>[1,2,3,4,5]</code>的内存地址，<code>shadow</code> 是指向其中 <code>[2，3]</code> 的内存地址。在向 <code>shadow</code> 增加后，会直接修改真实的数组，间接影响到指向数组的所有切片。所以可以修改上述代码为：</p><pre><code>a := []int{1, 2, 3, 4, 5}
+shadow := append([]int{}, a[1:3]...)
+shadow = append(shadow, 100)
+fmt.Println(shadow, a)
+// [2 3 100] [1 2 3 4 5]
+</code></pre><p>如果某个函数的返回值，是上述的这种情况 <code>return a[1:3]</code>，还会造成 <code>[1,2,3,4,5]</code> 锁占用的内存无法释放。</p><h3 id="黑魔法"><a href="#黑魔法" class="headerlink" title="黑魔法"></a>黑魔法</h3><p>知道了 <code>slice</code> 本身是指向真实的数组的指针，在 <code>Golang</code> 中提供了 <code>unsafe</code> 来做指针操作。</p><pre><code>a := []int{1, 2, 3, 4, 5}
+shadow := a[1:3]
+shadowPtr := uintptr(unsafe.Pointer(&amp;shadow[0]))
+offset := unsafe.Sizeof(int(0))
+fmt.Println(*(*int)(unsafe.Pointer(shadowPtr - offset)))    // 1
+fmt.Println(*(*int)(unsafe.Pointer(shadowPtr + 2*offset)))    // 4
+</code></pre><p><code>shadowPtr</code> 是 a 的第1个下标的位置，一个 <code>int</code> 在64位机器上是8 bytes，向前偏移1个 <code>offset</code>，是 a 的第0个下标 1；向后偏移2个 <code>offset</code>，是 a 的第3个下标 4。</p><h3 id="并发安全"><a href="#并发安全" class="headerlink" title="并发安全"></a>并发安全</h3><p><code>slice</code> 是非协程安全的数据类型，如果创建多个 <code>goroutine</code> 对 <code>slice</code> 进行并发读写，会造成丢失。看一段代码</p><pre><code>package main
+
+import (
+    &quot;fmt&quot;
+    &quot;sync&quot;
+)
+
+func main () {
+    a := make([]int, 0)
+    var wg sync.WaitGroup
+    for i := 0; i &lt; 10000; i++ {
+        wg.Add(1)
+        go func(i int) {
+            a = append(a, i)
+            wg.Done()
+        }(i)
+    }
+    wg.Wait()
+    fmt.Println(len(a))
+}
+// 9403 9876 9985 9491 ...
+</code></pre><p>多次执行，每次得到的结果都不一样，总之一定不会是想要的 10000 个。想要解决这个问题，按照协程安全的编程思想来考虑问题，<br>可以考虑使用 <code>channel</code> 本身的特性(阻塞)来实现安全的并发读写。</p><pre><code>func main() {
+    a := make([]int, 0)
+    buffer := make(chan int)
+    go func() {
+        for v := range buffer {
+            a = append(a, v)
+        }
+    }()
+
+    var wg sync.WaitGroup
+    for i := 0; i &lt; 10000; i++ {
+        wg.Add(1)
+        go func(i int) {
+            buffer &lt;- i
+            wg.Done()
+        }(i)
+    }
+    wg.Wait()
+    fmt.Println(len(a))
+}
+// 10000
+</code></pre></div><section class="comments" id="comments"><div id="gitment_thread"></div><link rel="stylesheet" href="//unpkg.com/gitment/style/default.css"><script src="//unpkg.com/gitment/dist/gitment.browser.js"></script><script>var gitment=new Gitment({id:"{{ page.date }}",owner:"8090Lambert",repo:"8090Lambert.github.io",oauth:{client_id:"b2e729afbaa762a4cecc",client_secret:"cb9b28cda56154edecbcf76d2ea66e5a0e12c209"}});gitment.render("comments")</script></section></div></div></div></article><footer><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><p class="copyright text-muted"> &copy; 2016 - 2021<span class="with-love"><i class="fa fa-heart"></i></span> <span class="author">8090Lambert</span><script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></p><p class="visit-statistics"> <span id="busuanzi_container_site_pv">本站总访问：<span id="busuanzi_value_site_pv"></span>次 &nbsp;&nbsp;&nbsp;&nbsp;</span></p><p></p></div></div></div></footer><script src="/js/highlight.pack.js"></script><script>document.addEventListener("DOMContentLoaded",function(e){Array.prototype.slice.call(document.getElementsByTagName("pre")).forEach(function(e,t){hljs.highlightBlock(e)})})</script></body></html>

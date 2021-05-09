@@ -1,0 +1,42 @@
+<!DOCTYPE html><html><head><meta name="generator" content="Hexo 3.9.0"><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content=""><meta name="author" content="8090Lambert"><meta name="google-site-verification" content="NlVkPYQIz-6FEWSYj-zlvN-gVromFNmq2v7hUK_WyyM"><meta name="sogou_site_verification" content="GFRFxFpBEM"><meta property="og:title" content="PHP的魔术方法：__clone()"><meta property="og:description" content="A Programmer With Coding."><meta property="og:site_name" content="8090Lambert | Blog"><meta property="og:type" content="article"><meta property="og:image" content="http://8090lambert.cn"><link rel="alternate" href="/atom.xml" title="8090Lambert | Blog" type="application/atom+xml"><link rel="icon" href="/images/favicon.ico"><title>8090Lambert | Blog</title><link rel="stylesheet" href="/css/bootstrap.min.css"><link rel="stylesheet" href="/css/font-awesome.min.css"><link rel="stylesheet" href="/css/style.css"><script>window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)},ga.l=+new Date,ga("create","UA-146263529-1","auto"),ga("send","pageview")</script><script async src="https://www.google-analytics.com/analytics.js"></script><script>var _hmt=_hmt||[]</script><script async src="//hm.baidu.com/hm.js?dfc9714182f4393d85cb19cc7ad9c231"></script></head><body><nav class="navbar-custom navbar-fixed-top"><div class="container-fluid"><div class="collapse navbar-collapse site-menu"><ul class="nav navbar-nav navbar-right"><li> <a href="/">Home</a></li><li> <a href="/archives">Archives</a></li><li> <a href="/about">About</a></li><li> <a href="mailto:<juzs215@gmail.com>">Email</a></li><li><a href="https://github.com/8090Lambert"><i class="icon fa fa-github fa-lg"></i></a></li></ul></div></div></nav><header class="site-header header-background intro-header" style="background-image:url(/img/banner.jpg)"><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="page-title with-background-image"><p class="title">PHP的魔术方法：__clone()</p><p class="subtitle"></p></div></div></div></div></header><article><div class="container typo"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="post-info text-muted"> <span class="author info">By 8090Lambert</span> <span class="date-time info">On <span class="date">2016-07-16T14:59:14+08:00</span></span></div><div class="post-tags text-muted"> Tags: <a class="tag" href="/tags/php/">#php</a></div><div class="post-content"><p>最近在写代码的时候，碰到需要copy对象，在 php.net 看到这段话：</p><pre><code class="angular2html">$copy_of_object = clone $object;
+当对象被复制后，PHP 5 会对对象的所有属性执行一个浅复制（shallow copy）。所有的引用属性 仍然会是一个指向原来的变量的引用。
+</code></pre><h3 id="赋值"><a href="#赋值" class="headerlink" title="赋值"></a>赋值</h3><p>在PHP中， 对象间的赋值操作实际上是引用操作 （事实上，绝大部分的编程语言都是如此! 主要原因是内存及性能的问题)</p><pre><code class="angular2html">$bob = new Boy(10);
+$jack = $bob;
+$jack-&gt;age++;
+
+echo $jack-&gt;age;    // 11
+echo $bob-&gt;age; // 11
+</code></pre><h3 id="浅克隆"><a href="#浅克隆" class="headerlink" title="浅克隆"></a>浅克隆</h3><p>其实 $bob 和 $jack 指针都是指向同一个内存区，所以，修改任意一个对象，另外一个对象也会随之变化。<br>如果我们不希望对象是 reference 方式的复制，这就需要用到 clone 关键字。</p><pre><code class="angular2html">$school = new School();
+$jack = new Boy(10);
+$school-&gt;FirstGrade($jack);
+$school2 = clone $school;
+$jack-&gt;age++;
+
+echo $school-&gt;firstGrader-&gt;age; // 11
+echo $school2-&gt;firstGrader-&gt;age;    // 11, 克隆对象中的对象 (引用属性) 也被修改
+</code></pre><p>如果想要对象中的属性完全复制(指克隆对象和源对象指向两个不同的内存区)</p><h3 id="深克隆"><a href="#深克隆" class="headerlink" title="深克隆"></a>深克隆</h3><pre><code class="angular2html">class School
+{
+    public $grader;
+
+    /**
+     * @param $grader
+     */
+    public function grade($grader)
+    {
+        $this-&gt;grader = $grader;
+    }
+
+    public function __clone()
+    {
+        $this-&gt;grader = clone $this-&gt;grader;
+    }
+}
+$school = new School();
+$jack = new Boy(10);
+$school-&gt;grade($jack);
+$school2 = clone $school;
+$jack-&gt;age++;
+
+echo $school-&gt;grader-&gt;age;  // 11
+echo $school2-&gt;grader-&gt;age; // 10   此时，克隆的对象未发生变化。
+</code></pre><h3 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h3><p>浅克隆：变量类型为标量(int，string, bool, array)为值传递，对象类型为引用传递。<br>深克隆：所有元素或属性均完全复制，与源对象无关，也就是说所有对于新对象的修改都不会影响到源对象。</p><h3 id="Tips"><a href="#Tips" class="headerlink" title="Tips"></a>Tips</h3><p>在PHP里，只需要 <code>$cloneObject = unserialize(serialize($object))</code> 对源对象做 序列化-&gt;反序列化 的操作，便可以得到深克隆的对象。（会有性能损失和安全问题，下一章会说对象序列化的安全问题）</p></div><section class="comments" id="comments"><div id="gitment_thread"></div><link rel="stylesheet" href="//unpkg.com/gitment/style/default.css"><script src="//unpkg.com/gitment/dist/gitment.browser.js"></script><script>var gitment=new Gitment({id:"{{ page.date }}",owner:"8090Lambert",repo:"8090Lambert.github.io",oauth:{client_id:"b2e729afbaa762a4cecc",client_secret:"cb9b28cda56154edecbcf76d2ea66e5a0e12c209"}});gitment.render("comments")</script></section></div></div></div></article><footer><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><p class="copyright text-muted"> &copy; 2016 - 2021<span class="with-love"><i class="fa fa-heart"></i></span> <span class="author">8090Lambert</span><script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></p><p class="visit-statistics"> <span id="busuanzi_container_site_pv">本站总访问：<span id="busuanzi_value_site_pv"></span>次 &nbsp;&nbsp;&nbsp;&nbsp;</span></p><p></p></div></div></div></footer><script src="/js/highlight.pack.js"></script><script>document.addEventListener("DOMContentLoaded",function(e){Array.prototype.slice.call(document.getElementsByTagName("pre")).forEach(function(e,t){hljs.highlightBlock(e)})})</script></body></html>

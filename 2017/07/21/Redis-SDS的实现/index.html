@@ -1,0 +1,54 @@
+<!DOCTYPE html><html><head><meta name="generator" content="Hexo 3.9.0"><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content=""><meta name="author" content="8090Lambert"><meta name="google-site-verification" content="NlVkPYQIz-6FEWSYj-zlvN-gVromFNmq2v7hUK_WyyM"><meta name="sogou_site_verification" content="GFRFxFpBEM"><meta property="og:title" content="Redis-SDS的实现"><meta property="og:description" content="A Programmer With Coding."><meta property="og:site_name" content="8090Lambert | Blog"><meta property="og:type" content="article"><meta property="og:image" content="http://8090lambert.cn"><link rel="alternate" href="/atom.xml" title="8090Lambert | Blog" type="application/atom+xml"><link rel="icon" href="/images/favicon.ico"><title>8090Lambert | Blog</title><link rel="stylesheet" href="/css/bootstrap.min.css"><link rel="stylesheet" href="/css/font-awesome.min.css"><link rel="stylesheet" href="/css/style.css"><script>window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)},ga.l=+new Date,ga("create","UA-146263529-1","auto"),ga("send","pageview")</script><script async src="https://www.google-analytics.com/analytics.js"></script><script>var _hmt=_hmt||[]</script><script async src="//hm.baidu.com/hm.js?dfc9714182f4393d85cb19cc7ad9c231"></script></head><body><nav class="navbar-custom navbar-fixed-top"><div class="container-fluid"><div class="collapse navbar-collapse site-menu"><ul class="nav navbar-nav navbar-right"><li> <a href="/">Home</a></li><li> <a href="/archives">Archives</a></li><li> <a href="/about">About</a></li><li> <a href="mailto:<juzs215@gmail.com>">Email</a></li><li><a href="https://github.com/8090Lambert"><i class="icon fa fa-github fa-lg"></i></a></li></ul></div></div></nav><header class="site-header header-background intro-header" style="background-image:url(/img/banner.jpg)"><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="page-title with-background-image"><p class="title">Redis-SDS的实现</p><p class="subtitle"></p></div></div></div></div></header><article><div class="container typo"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><div class="post-info text-muted"> <span class="author info">By 8090Lambert</span> <span class="date-time info">On <span class="date">2017-07-21T15:58:47+08:00</span></span></div><div class="post-tags text-muted"> Tags: <a class="tag" href="/tags/redis/">#redis</a></div><div class="post-content"><p>Redis 的作者 <code>antirez</code> 在前些日子，通过博客文章《 <a href="http://antirez.com/news/110" target="_blank" rel="noopener">The first release candidate of Redis 4.0 is out</a> 》发布了 redis 4.0 版本。在网上看到了一些文章，对于4.0新特性的介绍：</p><ul><li>Lazyfree，之前的版本，在对一个较大的key执行删除时，会造成 redis-server 阻塞，现在可以使用 <code>UNLINK</code> 异步删除， <code>FLUSHDB</code> 和 <code>FLUSHALL</code> 都新增了 <code>ASYNC</code> 选项，支持在后台线程进行；</li><li>LFU，新添加了 Last Frequently Used 缓存驱逐策略，具体见 <a href="http://antirez.com/news/109" target="_blank" rel="noopener">antirez的另一篇文章</a>；</li><li>内存命令，新添加了一个 MEMORY 命令， 可以用于内存使用情况；</li><li>混合 RDB-AOF 持久化格式，之前大部分的做法，都是同时开启 RDB 和 AOF 两种持久化，这种模式会在 AOF rewrite 文件里同时包含 RDB 格式的内容和 AOF 格式的内容，可以发生问题时迅速载入数据（RDB 优点），还能快速的生成重写文件</li><li>更多的可以查看 <a href="https://raw.githubusercontent.com/antirez/redis/4.0/00-RELEASENOTES" target="_blank" rel="noopener">https://raw.githubusercontent.com/antirez/redis/4.0/00-RELEASENOTES</a></li></ul><p>有了这么几个优化点，带着好奇心，决定看看新版本的源码和之前相比有什么不同。</p><h3 id="新版本的-SDS"><a href="#新版本的-SDS" class="headerlink" title="新版本的 SDS"></a>新版本的 SDS</h3><p>我们都知道，sds 是 Redis 用来表示字符串键值对，在3.0版本中，sds的结构体是这样子的:</p><pre><code class="angular2html">struct sdshdr {
+    int len; // 记录 buf 数组中已使用字节的数量，等于SDS所保存字符串的长度 
+    int free; // 记录 buf 数组中未使用字节的数量  
+    char buf[]; // 字节数组，用于保存字符串  
+}
+</code></pre><p>新版本的sds根据保存字符串长度的不同，分别对应5种结构体：</p><pre><code class="angular2html">/* Note: sdshdr5 is never used, we just access the flags byte directly.
+ * However is here to document the layout of type 5 SDS strings. */
+struct __attribute__ ((__packed__)) sdshdr5 {
+    unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
+    char buf[];
+};
+struct __attribute__ ((__packed__)) sdshdr8 {
+    uint8_t len; /* used */
+    uint8_t alloc; /* excluding the header and null terminator */
+    unsigned char flags; /* 3 lsb of type, 5 unused bits */
+    char buf[];
+};
+struct __attribute__ ((__packed__)) sdshdr16 {
+    uint16_t len; /* used */
+    uint16_t alloc; /* excluding the header and null terminator */
+    unsigned char flags; /* 3 lsb of type, 5 unused bits */
+    char buf[];
+};
+struct __attribute__ ((__packed__)) sdshdr32 {
+    uint32_t len; /* used */
+    uint32_t alloc; /* excluding the header and null terminator */
+    unsigned char flags; /* 3 lsb of type, 5 unused bits */
+    char buf[];
+};
+struct __attribute__ ((__packed__)) sdshdr64 {
+    uint64_t len; /* used */
+    uint64_t alloc; /* excluding the header and null terminator */
+    unsigned char flags; /* 3 lsb of type, 5 unused bits */
+    char buf[];
+};
+</code></pre><p>新的结构体，其中 <code>len</code> 表示字符串的长度（不包含结尾’\0’的空字符）；<code>alloc</code> 表示为字符串分配的空间，<code>flags</code> 中最低三个bit，表示类型， <code>buf</code> 存储着具体的字符串</p><h3 id="常数复杂度获取字符串长度"><a href="#常数复杂度获取字符串长度" class="headerlink" title="常数复杂度获取字符串长度"></a>常数复杂度获取字符串长度</h3><p>sds 和 C 字符串都是以一个空字符 “\0” 结尾。C 字符串本身不记录长度，要想得到长度，必须遍历计算，时间复杂度 O(N)，而 sds 结构体中的 <code>len</code> 记录了本身的长度，所以获取一个 sds 字符串的长度的复杂度是 O(1)。</p><p>sds 在每次初始化或者长度有变化时，相应的 api 都会有这样的计算，可以直接使用而无需关心是怎么样做的，有兴趣的可以看源码的 src/sds.h 中的 <code>sdslen</code> 方法（86行）</p><h3 id="杜绝缓冲区的溢出"><a href="#杜绝缓冲区的溢出" class="headerlink" title="杜绝缓冲区的溢出"></a>杜绝缓冲区的溢出</h3><p>在做字符串拼接的时候，在 C 语言里，比如执行 <code>strcat(char *hello, const char *world )</code> 拼接两个字符串时，在内存中与 hello 紧邻的还有另一个字符串 “hello1”，假定未为 hello 分配足够多的内存，在 <code>strcat</code> 执行后，hello 的数据溢出到 “hello1”，<strong>导致其中 “hello” 被 “world” 在不知情的情况下被替换掉</strong>，这种情况是非常危险的…</p><p>sds 在字符串修改时，在拼接之前，会先检查 sds 的空间是否满足，如果不满足的话，会自动（通过调用 <code>sdsMakeRoomFor</code>）修改至所需的大小，然后才执行实际的修改，这样保证了新的字符串不会因为溢出而污染其他相邻内存上的数据。</p><h3 id="空间分配策略"><a href="#空间分配策略" class="headerlink" title="空间分配策略"></a>空间分配策略</h3><p>C 字符串在每次增加或者缩短字符串时，程序总是要对这个 C 字符串的数组进行一次内存重新分配：</p><blockquote><p>如果是增长字符串，那么在执行这个操作之前，需要通过内存重新分配来扩展底层数组的大小，否则就会造成 缓冲区溢出</p></blockquote><blockquote><p>如果是缩短字符串，那么在执行这个操作之后，需要通过内存重新分配来释放字符串不再使用的那部分空间，否则就会造成 内存泄露</p></blockquote><p>每一次内存分配，都是比较耗时的操作，涉及到复杂的算法和内存的IO，如果出于性能的考虑，就要更可能少的去做这样的事情。</p><p>作者的初衷，相信也是将 Redis 定位成更高效，性能更好的NoSQL。为了优化 这种缺陷，sds做了预分配和惰性释放来分别应对这两种内存重新分配的情况。</p><ol><li>空间预分配</li></ol><p>空间预分配主要作用于 sds 字符串增长操作，通过 API <code>sdsMakeRoomFor</code> 来重新计算分配空间，具体规则在 src/sds.c 210行：</p><pre><code class="angular2html">if (newlen &lt; SDS_MAX_PREALLOC)
+    newlen *= 2;
+else
+    newlen += SDS_MAX_PREALLOC;
+</code></pre><p>总结一下就是：如果新的字符串大小 <strong>小于</strong> 1MB，那么会分配 2倍的新的字符串的大小，即 <code>newlen *= 2</code>，buf 的大小则为 <code>newlen * 2 + 1</code>，一字节用来存结尾空字符 “\0”；如果新字符串的长度 <strong>大于</strong> 1MB，那么会分配 新字符串大小 + 1MB，即 <code>newlen += SDS_MAX_PREALLOC</code>。</p><p>这样做的话，会将原本增长N次，便会重新进行N次内存分配，变成了，最多会重新分配内存N次，就是说，如果一次预分配后的大小，满足 sds 修改后的大小，就不需要再对内存重新分配，直接增长即可。</p><ol start="2"><li>空间惰性释放</li></ol><p>空间惰性释放是指缩短 sds 时，不是立即使用内存重新分配来回收缩短后多出来的空间，而是继续保留，以便将来使用。<br>以 <code>sdstrim</code> 这个 api 为例，看下它的源码</p><pre><code class="angular2html">sds sdstrim(sds s, const char *cset) {
+    char *start, *end, *sp, *ep;
+    size_t len;
+
+    sp = start = s;
+    ep = end = s+sdslen(s)-1;
+    while(sp &lt;= end &amp;&amp; strchr(cset, *sp)) sp++;
+    while(ep &gt; sp &amp;&amp; strchr(cset, *ep)) ep--;
+    len = (sp &gt; ep) ? 0 : ((ep-sp)+1);
+    if (s != sp) memmove(s, sp, len);
+    s[len] = &#39;\0&#39;;
+    sdssetlen(s,len);
+    return s;
+}
+</code></pre><p>只做了 <code>memmove</code> 操作，并没有真正重新分配内存，倘若此时，需要执行 <code>sdscat</code>，拼接上一个较短字符串，就可以直接使用，避免了再次分配内存。</p><p>如果有需要，必须使用释放掉这部分内存，可以调用 <code>sdsRemoveFreeSpace</code> 来真正释放掉。</p><h3 id="二进制安全"><a href="#二进制安全" class="headerlink" title="二进制安全"></a>二进制安全</h3><p>我们都知道，C 字符串除了在末尾的空字符外，其他位置不允许有空字符，否则最先被读到的空字符，就会被误认为是字符串结尾。这样限制了只能存储纯文本内容，不能保存二进制数据。</p><p>sds 就不会有这样的要求，它可以满足你存储任何数据，即使字符串中间有空字符也不受影响，因为它有 len 来表示字符串是否结尾。sds 所有 API 都是二进制安全的，和 C 字符串一样，是以空字符结尾，因此可以复用 C 字符串的一些函数。</p><p>以上就是我对 sds 字符串的认识，觉得作者真的是非常用心的设计，既遵循了规范，并且还有很好的优化点在里面，越来越有兴趣继续研究下去了~</p></div><section class="comments" id="comments"><div id="gitment_thread"></div><link rel="stylesheet" href="//unpkg.com/gitment/style/default.css"><script src="//unpkg.com/gitment/dist/gitment.browser.js"></script><script>var gitment=new Gitment({id:"{{ page.date }}",owner:"8090Lambert",repo:"8090Lambert.github.io",oauth:{client_id:"b2e729afbaa762a4cecc",client_secret:"cb9b28cda56154edecbcf76d2ea66e5a0e12c209"}});gitment.render("comments")</script></section></div></div></div></article><footer><div class="container"><div class="row"><div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1"><p class="copyright text-muted"> &copy; 2016 - 2021<span class="with-love"><i class="fa fa-heart"></i></span> <span class="author">8090Lambert</span><script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></p><p class="visit-statistics"> <span id="busuanzi_container_site_pv">本站总访问：<span id="busuanzi_value_site_pv"></span>次 &nbsp;&nbsp;&nbsp;&nbsp;</span></p><p></p></div></div></div></footer><script src="/js/highlight.pack.js"></script><script>document.addEventListener("DOMContentLoaded",function(e){Array.prototype.slice.call(document.getElementsByTagName("pre")).forEach(function(e,t){hljs.highlightBlock(e)})})</script></body></html>
