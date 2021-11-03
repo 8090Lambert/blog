@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>http://8090lambert.cn/2020/02/03/IO%20Optimize/</loc>
-    <lastmod>2021-11-03T04:16:29.908Z</lastmod>
+    <loc>http://8090lambert.cn/2019/12/27/Kafka%E5%8E%9F%E7%90%86%E5%9B%9B%E9%97%AE/</loc>
+    <lastmod>2021-11-03T05:09:18.306Z</lastmod>
+  </url>  <url>
+    <loc>http://8090lambert.cn/2020/04/25/IO%20Optimize/</loc>
+    <lastmod>2021-11-03T04:29:22.105Z</lastmod>
   </url>  <url>
     <loc>http://8090lambert.cn/2021/05/23/sync-Pool%E5%8E%9F%E7%90%86%E8%A7%A3%E6%9E%90/</loc>
     <lastmod>2021-11-03T04:04:31.554Z</lastmod>
@@ -13,10 +16,10 @@
     <loc>http://8090lambert.cn/2019/04/21/%E8%AF%A6%E8%A7%A3%20Golang%20%E7%9A%84%20slice%20%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/</loc>
     <lastmod>2021-05-09T14:50:16.599Z</lastmod>
   </url>  <url>
-    <loc>http://8090lambert.cn/2018/11/27/%E8%81%8A%E8%81%8A504%E3%80%81502%E5%92%8C499%E7%9A%84%E6%95%85%E4%BA%8B/</loc>
+    <loc>http://8090lambert.cn/2018/12/04/%E5%AF%B9%E6%AF%94IO%E5%92%8CIO%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E6%A8%A1%E5%9E%8B/</loc>
     <lastmod>2021-05-09T14:50:16.599Z</lastmod>
   </url>  <url>
-    <loc>http://8090lambert.cn/2018/12/04/%E5%AF%B9%E6%AF%94IO%E5%92%8CIO%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E6%A8%A1%E5%9E%8B/</loc>
+    <loc>http://8090lambert.cn/2018/11/27/%E8%81%8A%E8%81%8A504%E3%80%81502%E5%92%8C499%E7%9A%84%E6%95%85%E4%BA%8B/</loc>
     <lastmod>2021-05-09T14:50:16.599Z</lastmod>
   </url>  <url>
     <loc>http://8090lambert.cn/2019/04/15/%E5%88%86%E5%B8%83%E5%BC%8F%E4%BA%8B%E5%8A%A1%E5%8E%9F%E7%90%86/</loc>
@@ -40,13 +43,13 @@
     <loc>http://8090lambert.cn/2017/07/23/Redis-%E9%93%BE%E8%A1%A8/</loc>
     <lastmod>2021-05-09T14:50:16.596Z</lastmod>
   </url>  <url>
-    <loc>http://8090lambert.cn/2018/11/29/Redis-%E5%AD%97%E5%85%B8/</loc>
+    <loc>http://8090lambert.cn/2018/11/02/Redis-%E8%B7%B3%E8%B7%83%E8%A1%A8/</loc>
     <lastmod>2021-05-09T14:50:16.595Z</lastmod>
   </url>  <url>
     <loc>http://8090lambert.cn/2018/11/11/Redis-%E6%95%B4%E6%95%B0%E9%9B%86%E5%90%88/</loc>
     <lastmod>2021-05-09T14:50:16.595Z</lastmod>
   </url>  <url>
-    <loc>http://8090lambert.cn/2018/11/02/Redis-%E8%B7%B3%E8%B7%83%E8%A1%A8/</loc>
+    <loc>http://8090lambert.cn/2018/11/29/Redis-%E5%AD%97%E5%85%B8/</loc>
     <lastmod>2021-05-09T14:50:16.595Z</lastmod>
   </url>  <url>
     <loc>http://8090lambert.cn/2017/07/21/Redis-SDS%E7%9A%84%E5%AE%9E%E7%8E%B0/</loc>
@@ -55,10 +58,10 @@
     <loc>http://8090lambert.cn/2016/07/16/PHP%E7%9A%84%E9%AD%94%E6%9C%AF%E6%96%B9%E6%B3%95%EF%BC%9A-clone/</loc>
     <lastmod>2021-05-09T14:50:16.594Z</lastmod>
   </url>  <url>
-    <loc>http://8090lambert.cn/2019/10/11/Golang%E7%9A%84interface%E6%8E%A2%E7%A9%B6/</loc>
+    <loc>http://8090lambert.cn/2017/02/18/PHP%E5%BA%8F%E5%88%97%E5%8C%96%E7%9A%84%E6%BC%8F%E6%B4%9E/</loc>
     <lastmod>2021-05-09T14:50:16.593Z</lastmod>
   </url>  <url>
-    <loc>http://8090lambert.cn/2017/02/18/PHP%E5%BA%8F%E5%88%97%E5%8C%96%E7%9A%84%E6%BC%8F%E6%B4%9E/</loc>
+    <loc>http://8090lambert.cn/2019/10/11/Golang%E7%9A%84interface%E6%8E%A2%E7%A9%B6/</loc>
     <lastmod>2021-05-09T14:50:16.593Z</lastmod>
   </url>
 </urlset>
