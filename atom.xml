@@ -6,7 +6,7 @@
   <link href="/atom.xml" rel="self"/>
   
   <link href="http://8090lambert.cn/"/>
-  <updated>2021-11-03T04:04:31.554Z</updated>
+  <updated>2021-11-03T08:49:20.549Z</updated>
   <id>http://8090lambert.cn/</id>
   
   <author>
@@ -15,6 +15,28 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title>一致性协议raft、zab的区别</title>
+    <link href="http://8090lambert.cn/2021/11/03/%E4%B8%80%E8%87%B4%E6%80%A7%E5%8D%8F%E8%AE%AEraft%E3%80%81zab%E7%9A%84%E5%8C%BA%E5%88%AB/"/>
+    <id>http://8090lambert.cn/2021/11/03/一致性协议raft、zab的区别/</id>
+    <published>2021-11-03T06:46:43.000Z</published>
+    <updated>2021-11-03T08:49:20.549Z</updated>
+    
+    <content type="html"><![CDATA[<h2 id="目的"><a href="#目的" class="headerlink" title="目的"></a>目的</h2><p>为解决大型分布式系统中多个副本日志及状态机一致性问题。</p><h2 id="Raft介绍"><a href="#Raft介绍" class="headerlink" title="Raft介绍"></a>Raft介绍</h2><p>协议由三部分组成：Leader election、Log Replication、Safety。分别对应着三种状态的身份：<br>leader(工作时的首要进程)、candidate(选举时可能会成为leader)、follower(副本).</p><h2 id="Raft选举"><a href="#Raft选举" class="headerlink" title="Raft选举"></a>Raft选举</h2><p>选举的时机一般有两种： </p><ul><li>初始化时，系统中不存在 Leader 角色。所有节点均为 candidate 角色</li><li>follower 在 election timeout 后没有收到 leader心跳，follower 变为 candidate 角色</li></ul><p>candidate向其他节点发起 leader election 请求，得到超过半数其他 candidate 的回复后成为leader. 同时选举的过程存在极端情况：</p><ul><li>所有选票被多个节点瓜分，没有选出leader。</li></ul><p>为避免发生多个 candidate 同时发生选举，而导致的多次选举。raft采用 <strong>random election timeout</strong> 机制，使每个节点的超时时间不同。<br>一般来说需要保证 election timeout &gt; broadcast 的间隔时间，否则，election timeout 无法说明与leader断开连接.</p><h2 id="安全性"><a href="#安全性" class="headerlink" title="安全性"></a>安全性</h2><h3 id="两个限制条件保证日志复制的安全"><a href="#两个限制条件保证日志复制的安全" class="headerlink" title="两个限制条件保证日志复制的安全"></a>两个限制条件保证日志复制的安全</h3><p>限制一：选举阶段节点 m 向节点 n 发送了 RequestVote RPC，如果节点 n 发现节点 m 的数据没有自己新，则节点 n 拒绝节点 m 的投票请求。<br>这里的“新”包含两个方面，term 更大的数据更新，term 相同，index更大的数据更新。    </p><p>选举时，只有日志最新的candidate才有机会得到超过半数的投票。其中有这两个条件:</p><ul><li>term越大的节点越容易成为leader</li><li>term相同的情况下，index越大的节点越容易成为leader  </li></ul><p>限制二：不直接提交之前 term 的log，必须通过提交本 term 的 log，间接的提交之前 term 的 log。<br>选举时，在条件1的情况下，term不同，可能选举出来的leader不包含所有过半提交的日志。要解决这个问题，需要在 那么就需要对过半提交通过限制二来约束。<br>一旦加上了这个限制意味着含有所有过半提交的日志的几个节点必然拥有目前最大的term，这样的话再次进行leader选举时，就避免了条件1的误判。</p><h2 id="Raft-对比-Zab"><a href="#Raft-对比-Zab" class="headerlink" title="Raft 对比 Zab"></a>Raft 对比 Zab</h2><h3 id="Leader-election-阶段"><a href="#Leader-election-阶段" class="headerlink" title="Leader election 阶段"></a>Leader election 阶段</h3><table><thead><tr><th style="text-align:left">Issue</th><th style="text-align:left">Raft</th><th style="text-align:left">Zab</th></tr></thead><tbody><tr><td style="text-align:left">Leader检测</td><td style="text-align:left">通过Follower心跳</td><td style="text-align:left">leader: 维护Quorum集合；<br> follower: 通过长链接</td></tr><tr><td style="text-align:left">过期leader判断</td><td style="text-align:left">term_id</td><td style="text-align:left">epoch</td></tr><tr><td style="text-align:left">leader投票过程</td><td style="text-align:left">每个节点每轮只投一次票</td><td style="text-align:left">每次选举节点可能产生多次投票，选出最新的</td></tr></tbody></table><ul><li>leader 可用性检查：Raft 协议 leader 宕机仅仅由 folower 进行检测，当 folower 收不到 leader 心跳时，则认为 leader 宕机，<br>变为 candidate。Zk 的 leader down 机分别由 leader 和 folower 检测，leader 维护了一个 Quorum 集合，当该 Quorum 集合不再超过半数，<br>leader 自动变为 LOOKING 状态。folower 与 leader 之间维护了一个超链接，连接断开则 folower 变为 LOOKING 状态。</li><li>过期 leader 的屏蔽：Raft 通过 term 识别过期的 leader。Zk 通过 Epoch识别过期的 leader。这点两者是相似的。</li><li>leader 选举的投票过程：Raft 每个选举周期每个节点只能投一次票，选举失败进入下次周期才能重新投票。<br>Zk 每次选举节点需要不断的变换选票以便选出数据最新的节点为 leader。</li><li>保证 commited 的数据出现在未来 leader 中：Raft选取 leader 时拒绝数据比自己旧的节点的投票。<br>Zk 通过在选取 leader 时不断更新选票使得拥有最新数据的节点当选 leader。</li></ul><p>Zab在leader选举出来后会立即进行数据同步过程，同步下最新的epoch（相当于term），数据同步之后就不会存在Raft（经过几个term变更后）日志错乱的现象。<br>Zab是正式对外提交服务之前先清理好数据的不一致问题，Raft是延迟清理的，在后续的复制过程中不断的进行纠正更新。</p><h3 id="Log-Replication-阶段"><a href="#Log-Replication-阶段" class="headerlink" title="Log Replication 阶段"></a>Log Replication 阶段</h3><table><thead><tr><th style="text-align:left">Issue</th><th style="text-align:left">Raft</th><th style="text-align:left">Zab</th></tr></thead><tbody><tr><td style="text-align:left">新leader数据同步</td><td style="text-align:left">通过AppendEntry Rpc每次同步</td><td style="text-align:left">通过 Recovery Phase 同步</td></tr><tr><td style="text-align:left">新leader数据同步量</td><td style="text-align:left">增量同步</td><td style="text-align:left">增量或全量同步</td></tr><tr><td style="text-align:left">之前未commit数据处理</td><td style="text-align:left">commit 当前term时，会将未提交数据一起commit</td><td style="text-align:left">Recovery Phase阶段commit</td></tr><tr><td style="text-align:left">新加入集群节点数据同步</td><td style="text-align:left">不阻塞写请求</td><td style="text-align:left">Recovery Phase 会阻塞写请求</td></tr></tbody></table><ul><li>选取新 leader 后数据同步：Raft 没有固定在某个特定的阶段做这件事情，通过每个节点的 AppendEntry RPC 分别做数据同步。<br>Zk 则在新leader 选举之后，有一个 Recovery Phase 做这个件事情。</li><li>选取新 leader 后同步的数据量：Raft 只需要传输和新 leader 差异的部分。Zab 的原始协议需要传输 leader 的全部数据，Zk 优化后，<br>视情况而定，最坏情况下需要传输 leader 全部数据。</li><li>新 leader 对之前 leader 未 commit 数据的处理：Raft 不会直接 commit 之前 leader 的数据，通过 commit 本 term 的数据间接的 commit 之前 leader 的数据。<br>Zk 在 Recovery Phase直接 commit 之前 leader 的数据。</li><li>新加入集群节点的数据同步：Raft 对于新加入集群的节点数据同步不会影响客户端的写请求。Zk 对于新加入集群的节点，需要单独走一下 Recovery Phase，<br>目前是通过读写锁同步的，因此会阻塞客户端的写请求。（Zk 可以在这里使用 copy-on-write 机制避免阻塞问题？？）</li></ul><h3 id="脑裂问题"><a href="#脑裂问题" class="headerlink" title="脑裂问题"></a>脑裂问题</h3><table><thead><tr><th style="text-align:left">Raft</th><th style="text-align:left">Zab</th></tr></thead><tbody><tr><td style="text-align:left">通过增加region leader角色 + lease机制，每个请求通过region leader转发至raft leader</td><td style="text-align:left">通过Quorum过半机制避免</td></tr></tbody></table><p>Tips： Etcd 不存在脑裂</p><h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><blockquote><p><a href="https://niceaz.com/2018/11/03/raft-and-zab/" target="_blank" rel="noopener">https://niceaz.com/2018/11/03/raft-and-zab/</a><br><a href="https://www.jianshu.com/p/072380e12657" target="_blank" rel="noopener">https://www.jianshu.com/p/072380e12657</a></p></blockquote>]]></content>
+    
+    <summary type="html">
+    
+      
+      
+        &lt;h2 id=&quot;目的&quot;&gt;&lt;a href=&quot;#目的&quot; class=&quot;headerlink&quot; title=&quot;目的&quot;&gt;&lt;/a&gt;目的&lt;/h2&gt;&lt;p&gt;为解决大型分布式系统中多个副本日志及状态机一致性问题。&lt;/p&gt;
+&lt;h2 id=&quot;Raft介绍&quot;&gt;&lt;a href=&quot;#Raft介绍&quot; clas
+      
+    
+    </summary>
+    
+    
+  </entry>
   
   <entry>
     <title>sync.Pool原理解析</title>
@@ -450,31 +472,6 @@
       
         &lt;h2 id=&quot;0-前言&quot;&gt;&lt;a href=&quot;#0-前言&quot; class=&quot;headerlink&quot; title=&quot;0.前言&quot;&gt;&lt;/a&gt;0.前言&lt;/h2&gt;&lt;p&gt;对象的序列化和反序列化作用就不再赘述,php中序列化的结果是一个php自定义的字符串格式,有点类似json.&lt;/p&gt;
 &lt;p&gt;
-      
-    
-    </summary>
-    
-    
-      <category term="php" scheme="http://8090lambert.cn/tags/php/"/>
-    
-  </entry>
-  
-  <entry>
-    <title>PHP的魔术方法：__clone()</title>
-    <link href="http://8090lambert.cn/2016/07/16/PHP%E7%9A%84%E9%AD%94%E6%9C%AF%E6%96%B9%E6%B3%95%EF%BC%9A-clone/"/>
-    <id>http://8090lambert.cn/2016/07/16/PHP的魔术方法：-clone/</id>
-    <published>2016-07-16T06:59:14.000Z</published>
-    <updated>2021-05-09T14:50:16.594Z</updated>
-    
-    <content type="html"><![CDATA[<p>最近在写代码的时候，碰到需要copy对象，在 php.net 看到这段话：</p><pre><code class="angular2html">$copy_of_object = clone $object;当对象被复制后，PHP 5 会对对象的所有属性执行一个浅复制（shallow copy）。所有的引用属性 仍然会是一个指向原来的变量的引用。</code></pre><h3 id="赋值"><a href="#赋值" class="headerlink" title="赋值"></a>赋值</h3><p>在PHP中， 对象间的赋值操作实际上是引用操作 （事实上，绝大部分的编程语言都是如此! 主要原因是内存及性能的问题)</p><pre><code class="angular2html">$bob = new Boy(10);$jack = $bob;$jack-&gt;age++;echo $jack-&gt;age;    // 11echo $bob-&gt;age; // 11</code></pre><h3 id="浅克隆"><a href="#浅克隆" class="headerlink" title="浅克隆"></a>浅克隆</h3><p>其实 $bob 和 $jack 指针都是指向同一个内存区，所以，修改任意一个对象，另外一个对象也会随之变化。<br>如果我们不希望对象是 reference 方式的复制，这就需要用到 clone 关键字。</p><pre><code class="angular2html">$school = new School();$jack = new Boy(10);$school-&gt;FirstGrade($jack);$school2 = clone $school;$jack-&gt;age++;echo $school-&gt;firstGrader-&gt;age; // 11echo $school2-&gt;firstGrader-&gt;age;    // 11, 克隆对象中的对象 (引用属性) 也被修改</code></pre><p>如果想要对象中的属性完全复制(指克隆对象和源对象指向两个不同的内存区)</p><h3 id="深克隆"><a href="#深克隆" class="headerlink" title="深克隆"></a>深克隆</h3><pre><code class="angular2html">class School{    public $grader;    /**     * @param $grader     */    public function grade($grader)    {        $this-&gt;grader = $grader;    }    public function __clone()    {        $this-&gt;grader = clone $this-&gt;grader;    }}$school = new School();$jack = new Boy(10);$school-&gt;grade($jack);$school2 = clone $school;$jack-&gt;age++;echo $school-&gt;grader-&gt;age;  // 11echo $school2-&gt;grader-&gt;age; // 10   此时，克隆的对象未发生变化。</code></pre><h3 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h3><p>浅克隆：变量类型为标量(int，string, bool, array)为值传递，对象类型为引用传递。<br>深克隆：所有元素或属性均完全复制，与源对象无关，也就是说所有对于新对象的修改都不会影响到源对象。</p><h3 id="Tips"><a href="#Tips" class="headerlink" title="Tips"></a>Tips</h3><p>在PHP里，只需要 <code>$cloneObject = unserialize(serialize($object))</code> 对源对象做 序列化-&gt;反序列化 的操作，便可以得到深克隆的对象。（会有性能损失和安全问题，下一章会说对象序列化的安全问题）</p>]]></content>
-    
-    <summary type="html">
-    
-      
-      
-        &lt;p&gt;最近在写代码的时候，碰到需要copy对象，在 php.net 看到这段话：&lt;/p&gt;
-&lt;pre&gt;&lt;code class=&quot;angular2html&quot;&gt;$copy_of_object = clone $object;
-当对象被复制后，PHP 5 会对对象的所有属性执行一个浅复制
       
     
     </summary>
