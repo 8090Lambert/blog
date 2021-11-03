@@ -2,6 +2,20 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   
   <url>
+    <loc>http://8090lambert.cn/2021/05/23/sync-Pool%E5%8E%9F%E7%90%86%E8%A7%A3%E6%9E%90/</loc>
+    
+    <lastmod>2021-11-03T03:16:16.057Z</lastmod>
+    
+  </url>
+  
+  <url>
+    <loc>http://8090lambert.cn/2020/02/03/IO%20Optimize/</loc>
+    
+    <lastmod>2021-11-03T03:16:05.408Z</lastmod>
+    
+  </url>
+  
+  <url>
     <loc>http://8090lambert.cn/tags/index.html</loc>
     
     <lastmod>2021-05-09T14:50:16.630Z</lastmod>
@@ -93,14 +107,14 @@
   </url>
   
   <url>
-    <loc>http://8090lambert.cn/2018/11/02/Redis-%E8%B7%B3%E8%B7%83%E8%A1%A8/</loc>
+    <loc>http://8090lambert.cn/2018/11/11/Redis-%E6%95%B4%E6%95%B0%E9%9B%86%E5%90%88/</loc>
     
     <lastmod>2021-05-09T14:50:16.595Z</lastmod>
     
   </url>
   
   <url>
-    <loc>http://8090lambert.cn/2018/11/11/Redis-%E6%95%B4%E6%95%B0%E9%9B%86%E5%90%88/</loc>
+    <loc>http://8090lambert.cn/2018/11/02/Redis-%E8%B7%B3%E8%B7%83%E8%A1%A8/</loc>
     
     <lastmod>2021-05-09T14:50:16.595Z</lastmod>
     
