@@ -2,16 +2,16 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   
   <url>
-    <loc>http://8090lambert.cn/2019/12/27/Kafka%E5%9B%9B%E9%97%AE/</loc>
+    <loc>http://8090lambert.cn/2020/07/25/IO%20Optimize/</loc>
     
-    <lastmod>2021-11-03T06:30:45.036Z</lastmod>
+    <lastmod>2021-11-03T06:41:14.370Z</lastmod>
     
   </url>
   
   <url>
-    <loc>http://8090lambert.cn/2020/04/25/IO%20Optimize/</loc>
+    <loc>http://8090lambert.cn/2020/01/27/Kafka%E5%9B%9B%E9%97%AE/</loc>
     
-    <lastmod>2021-11-03T04:29:22.105Z</lastmod>
+    <lastmod>2021-11-03T06:41:03.385Z</lastmod>
     
   </url>
   
@@ -44,14 +44,14 @@
   </url>
   
   <url>
-    <loc>http://8090lambert.cn/2019/04/21/%E8%AF%A6%E8%A7%A3%20Golang%20%E7%9A%84%20slice%20%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/</loc>
+    <loc>http://8090lambert.cn/2018/12/04/%E5%AF%B9%E6%AF%94IO%E5%92%8CIO%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E6%A8%A1%E5%9E%8B/</loc>
     
     <lastmod>2021-05-09T14:50:16.599Z</lastmod>
     
   </url>
   
   <url>
-    <loc>http://8090lambert.cn/2018/12/04/%E5%AF%B9%E6%AF%94IO%E5%92%8CIO%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E6%A8%A1%E5%9E%8B/</loc>
+    <loc>http://8090lambert.cn/2019/04/21/%E8%AF%A6%E8%A7%A3%20Golang%20%E7%9A%84%20slice%20%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/</loc>
     
     <lastmod>2021-05-09T14:50:16.599Z</lastmod>
     
@@ -93,6 +93,13 @@
   </url>
   
   <url>
+    <loc>http://8090lambert.cn/2019/05/26/Redis5.0%20RDB%E6%96%87%E4%BB%B6%E8%B6%85%E8%AF%A6%E7%BB%86%E8%A7%A3%E6%9E%90/</loc>
+    
+    <lastmod>2021-05-09T14:50:16.596Z</lastmod>
+    
+  </url>
+  
+  <url>
     <loc>http://8090lambert.cn/2018/12/06/epoll%E7%A9%B6%E7%AB%9F%E5%BF%AB%E5%9C%A8%E5%93%AA/</loc>
     
     <lastmod>2021-05-09T14:50:16.596Z</lastmod>
@@ -107,14 +114,7 @@
   </url>
   
   <url>
-    <loc>http://8090lambert.cn/2019/05/26/Redis5.0%20RDB%E6%96%87%E4%BB%B6%E8%B6%85%E8%AF%A6%E7%BB%86%E8%A7%A3%E6%9E%90/</loc>
-    
-    <lastmod>2021-05-09T14:50:16.596Z</lastmod>
-    
-  </url>
-  
-  <url>
-    <loc>http://8090lambert.cn/2018/11/29/Redis-%E5%AD%97%E5%85%B8/</loc>
+    <loc>http://8090lambert.cn/2018/11/02/Redis-%E8%B7%B3%E8%B7%83%E8%A1%A8/</loc>
     
     <lastmod>2021-05-09T14:50:16.595Z</lastmod>
     
@@ -128,7 +128,7 @@
   </url>
   
   <url>
-    <loc>http://8090lambert.cn/2018/11/02/Redis-%E8%B7%B3%E8%B7%83%E8%A1%A8/</loc>
+    <loc>http://8090lambert.cn/2018/11/29/Redis-%E5%AD%97%E5%85%B8/</loc>
     
     <lastmod>2021-05-09T14:50:16.595Z</lastmod>
     
