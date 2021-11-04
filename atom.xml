@@ -63,6 +63,30 @@
   </entry>
   
   <entry>
+    <title>背八股 要谨慎</title>
+    <link href="http://8090lambert.cn/2021/01/04/%E8%83%8C%E5%85%AB%E8%82%A1%20%E8%A6%81%E8%B0%A8%E6%85%8E/"/>
+    <id>http://8090lambert.cn/2021/01/04/背八股 要谨慎/</id>
+    <published>2021-01-04T10:11:47.000Z</published>
+    <updated>2021-11-04T12:36:52.561Z</updated>
+    
+    <content type="html"><![CDATA[<p>三天的元旦节，导致大量的面试积压，从早上来公司就开始疯狂补作业。自身本来就对面试没有太多激情，比较排斥八股文，刷题怪的这种套路。<br>临近下班前，和一位候选人聊到了他的项目（本人比较乐意从项目的设计来考察技术的深度和广度）。</p><p>项目的背景大致是教育直播相关的，对于直播的一些必要且时效性不高的数据，通过Redis做主动缓存，应对课堂上大流量的请求。<br>一般这种回答，我都愿意继续问一问，看看有没有更加全面的考虑和一些必要的兜底预案，算是讨论交流。这位同学回答说，他们线上的 Redis 使用<br>读写分离，采用1主多从的架构部署。</p><p>按照经验来看，redis 单实例应对 10W 以内的读写qps，没有什么特别压力。但是，存储组件在应对主从分离时，面临最大的是数据一致性。所以，顺口问<br>了候选人有没有在项目中碰到过因为读写分离导致的一致性问题，候选人谈到因为redis的过期key，导致在读取时会读到过期的key。</p><p>我突然有些吃惊。根据自己的知识面和记忆: Redis在主从架构下，如果当前key已经过期，</p><ul><li>在通过master获取过期key时，会执行异步懒删除，并将删除指令传播到slave节点，同时返回给clint不存在；</li><li>如果通过slave获取过期key时，由于主从同步之间网络耗时一定存在，会通过一个<code>logical clock</code>来返回key不存在</li></ul><p>持着怀疑的态度向他确认了为什么会读到过期的key。在追问下，他仅告诉我在主节点读取时会将删除命令同步到从节点，而从节点的逻辑却没有提到，<br>而且信心满满的告诉我他昨天刚看完书，肯定是这样的………</p><p><img src="http://8090lambert.cn/images/blog/redis/replica_del.jpg" alt="replica_del"><br>这一段摘自Redis官方文档中的描述，解释了Redis在处理复制时对过期key的处理策略。其中第一条，说明了slave节点删除key的指令是来由master节点<br>同步而来。第二条便是说，在slave节点上通过 <code>逻辑时钟</code> 来提示key不存在，这个操作是不违反数据一致性的读取，因为master节点的del命令会到达。</p><p><img src="http://8090lambert.cn/images/blog/redis/fix_slave_read_expire.jpg" alt="fix_slave_read_expire"><br>在github中也可以找到，redis作者在这个 <a href="https://github.com/redis/redis/commit/06e76bc3e22dd72a30a8a614d367246b03ff1312" target="_blank" rel="noopener">commit</a> 中就修复了这一问题。</p><pre><code>robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {    robj *val;    if (expireIfNeeded(db,key) == 1) {        /* If we are in the context of a master, expireIfNeeded() returns 1         * when the key is no longer valid, so we can return NULL ASAP. */        if (server.masterhost == NULL)            goto keymiss;        /* However if we are in the context of a slave, expireIfNeeded() will         * not really try to expire the key, it only returns information         * about the &quot;logical&quot; status of the key: key expiring is up to the         * master in order to have a consistent view of master&#39;s data set.         *         * However, if the command caller is not the master, and as additional         * safety measure, the command invoked is a read-only command, we can         * safely return NULL here, and provide a more consistent behavior         * to clients accessing expired values in a read-only fashion, that         * will say the key as non existing.         *         * Notably this covers GETs when slaves are used to scale reads. */        if (server.current_client &amp;&amp;            server.current_client != server.master &amp;&amp;            server.current_client-&gt;cmd &amp;&amp;            server.current_client-&gt;cmd-&gt;flags &amp; CMD_READONLY)        {            goto keymiss;        }    }    val = lookupKey(db,key,flags);    if (val == NULL)        goto keymiss;    server.stat_keyspace_hits++;    return val;keymiss:    if (!(flags &amp; LOOKUP_NONOTIFY)) {        notifyKeyspaceEvent(NOTIFY_KEY_MISS, &quot;keymiss&quot;, key, db-&gt;id);    }    server.stat_keyspace_misses++;    return NULL;}</code></pre><p>在源码中可以看到，如果是过期 <code>key</code> 并且 当前实例不是<code>master</code>，直接返回null  </p><p>最后，问一个开放性的问题，为什么这里没有直接删除呢？因为系统时钟是不可靠的，如果slave的时钟比master快，<br>key可能会在master之前过期，这时client在slave上读取并删除了实例上的key, 后续master可能会发送一个命令来设置key的新过期时间，<br>但由于key在slave上过期而失败。作者这个修改还是依赖master的命令来对slave上的key做写操作，只是对slave上存在<br>读请求时发生的不一致行为做了兼容。</p><p>所以，大家在学习”八股文”的时候，还是要结合代码或者官方文档推敲细节哟，哈哈哈~</p>]]></content>
+    
+    <summary type="html">
+    
+      
+      
+        &lt;p&gt;三天的元旦节，导致大量的面试积压，从早上来公司就开始疯狂补作业。自身本来就对面试没有太多激情，比较排斥八股文，刷题怪的这种套路。&lt;br&gt;临近下班前，和一位候选人聊到了他的项目（本人比较乐意从项目的设计来考察技术的深度和广度）。&lt;/p&gt;
+&lt;p&gt;项目的背景大致是教育直播相关的，
+      
+    
+    </summary>
+    
+    
+      <category term="redis" scheme="http://8090lambert.cn/tags/redis/"/>
+    
+  </entry>
+  
+  <entry>
     <title>一致性协议raft、zab的区别</title>
     <link href="http://8090lambert.cn/2020/11/03/%E4%B8%80%E8%87%B4%E6%80%A7%E5%8D%8F%E8%AE%AEraft%E3%80%81zab%E7%9A%84%E5%8C%BA%E5%88%AB/"/>
     <id>http://8090lambert.cn/2020/11/03/一致性协议raft、zab的区别/</id>
@@ -448,29 +472,6 @@
       
         &lt;p&gt;链表是一种基本的数据结构，它是由一系列的节点组成，每个节点上都包括有两部分数据：一个是存储数据元素的数据域，一个是存储下一个节点地址的指针域。新增节点时，可以做到O(1)的复杂度。链表一般分为：单向链表、双向链表、循环链表。Redis 的链表，属于双向链表。&lt;/p&gt;
 &lt;p&gt;
-      
-    
-    </summary>
-    
-    
-      <category term="redis" scheme="http://8090lambert.cn/tags/redis/"/>
-    
-  </entry>
-  
-  <entry>
-    <title>Redis-SDS的实现</title>
-    <link href="http://8090lambert.cn/2017/07/21/Redis-SDS%E7%9A%84%E5%AE%9E%E7%8E%B0/"/>
-    <id>http://8090lambert.cn/2017/07/21/Redis-SDS的实现/</id>
-    <published>2017-07-21T07:58:47.000Z</published>
-    <updated>2021-05-09T14:50:16.594Z</updated>
-    
-    <content type="html"><![CDATA[<p>Redis 的作者 <code>antirez</code> 在前些日子，通过博客文章《<a href="http://antirez.com/news/110" target="_blank" rel="noopener"> The first release candidate of Redis 4.0 is out </a>》发布了 redis 4.0 版本。在网上看到了一些文章，对于4.0新特性的介绍：</p><ul><li>Lazyfree，之前的版本，在对一个较大的key执行删除时，会造成 redis-server 阻塞，现在可以使用 <code>UNLINK</code> 异步删除， <code>FLUSHDB</code> 和 <code>FLUSHALL</code> 都新增了 <code>ASYNC</code> 选项，支持在后台线程进行；</li><li>LFU，新添加了 Last Frequently Used 缓存驱逐策略，具体见 <a href="http://antirez.com/news/109" target="_blank" rel="noopener">antirez的另一篇文章</a>；</li><li>内存命令，新添加了一个 MEMORY 命令， 可以用于内存使用情况；</li><li>混合 RDB-AOF 持久化格式，之前大部分的做法，都是同时开启 RDB 和 AOF 两种持久化，这种模式会在 AOF rewrite 文件里同时包含 RDB 格式的内容和 AOF 格式的内容，可以发生问题时迅速载入数据（RDB 优点），还能快速的生成重写文件</li><li>更多的可以查看 <a href="https://raw.githubusercontent.com/antirez/redis/4.0/00-RELEASENOTES" target="_blank" rel="noopener"> https://raw.githubusercontent.com/antirez/redis/4.0/00-RELEASENOTES </a></li></ul><p>有了这么几个优化点，带着好奇心，决定看看新版本的源码和之前相比有什么不同。</p><h3 id="新版本的-SDS"><a href="#新版本的-SDS" class="headerlink" title="新版本的 SDS"></a>新版本的 SDS</h3><p>我们都知道，sds 是 Redis 用来表示字符串键值对，在3.0版本中，sds的结构体是这样子的:</p><pre><code class="angular2html">struct sdshdr {    int len; // 记录 buf 数组中已使用字节的数量，等于SDS所保存字符串的长度     int free; // 记录 buf 数组中未使用字节的数量      char buf[]; // 字节数组，用于保存字符串  }</code></pre><p>新版本的sds根据保存字符串长度的不同，分别对应5种结构体：</p><pre><code class="angular2html">/* Note: sdshdr5 is never used, we just access the flags byte directly. * However is here to document the layout of type 5 SDS strings. */struct __attribute__ ((__packed__)) sdshdr5 {    unsigned char flags; /* 3 lsb of type, and 5 msb of string length */    char buf[];};struct __attribute__ ((__packed__)) sdshdr8 {    uint8_t len; /* used */    uint8_t alloc; /* excluding the header and null terminator */    unsigned char flags; /* 3 lsb of type, 5 unused bits */    char buf[];};struct __attribute__ ((__packed__)) sdshdr16 {    uint16_t len; /* used */    uint16_t alloc; /* excluding the header and null terminator */    unsigned char flags; /* 3 lsb of type, 5 unused bits */    char buf[];};struct __attribute__ ((__packed__)) sdshdr32 {    uint32_t len; /* used */    uint32_t alloc; /* excluding the header and null terminator */    unsigned char flags; /* 3 lsb of type, 5 unused bits */    char buf[];};struct __attribute__ ((__packed__)) sdshdr64 {    uint64_t len; /* used */    uint64_t alloc; /* excluding the header and null terminator */    unsigned char flags; /* 3 lsb of type, 5 unused bits */    char buf[];};</code></pre><p>新的结构体，其中 <code>len</code> 表示字符串的长度（不包含结尾’\0’的空字符）；<code>alloc</code> 表示为字符串分配的空间，<code>flags</code> 中最低三个bit，表示类型， <code>buf</code> 存储着具体的字符串</p><h3 id="常数复杂度获取字符串长度"><a href="#常数复杂度获取字符串长度" class="headerlink" title="常数复杂度获取字符串长度"></a>常数复杂度获取字符串长度</h3><p>sds 和 C 字符串都是以一个空字符 “\0” 结尾。C 字符串本身不记录长度，要想得到长度，必须遍历计算，时间复杂度 O(N)，而 sds 结构体中的 <code>len</code> 记录了本身的长度，所以获取一个 sds 字符串的长度的复杂度是 O(1)。</p><p>sds 在每次初始化或者长度有变化时，相应的 api 都会有这样的计算，可以直接使用而无需关心是怎么样做的，有兴趣的可以看源码的 src/sds.h 中的 <code>sdslen</code> 方法（86行）</p><h3 id="杜绝缓冲区的溢出"><a href="#杜绝缓冲区的溢出" class="headerlink" title="杜绝缓冲区的溢出"></a>杜绝缓冲区的溢出</h3><p>在做字符串拼接的时候，在 C 语言里，比如执行 <code>strcat(char *hello, const char *world )</code> 拼接两个字符串时，在内存中与 hello 紧邻的还有另一个字符串 “hello1”，假定未为 hello 分配足够多的内存，在 <code>strcat</code> 执行后，hello 的数据溢出到 “hello1”，<strong>导致其中 “hello” 被 “world” 在不知情的情况下被替换掉</strong>，这种情况是非常危险的…</p><p>sds 在字符串修改时，在拼接之前，会先检查 sds 的空间是否满足，如果不满足的话，会自动（通过调用 <code>sdsMakeRoomFor</code>）修改至所需的大小，然后才执行实际的修改，这样保证了新的字符串不会因为溢出而污染其他相邻内存上的数据。</p><h3 id="空间分配策略"><a href="#空间分配策略" class="headerlink" title="空间分配策略"></a>空间分配策略</h3><p>C 字符串在每次增加或者缩短字符串时，程序总是要对这个 C 字符串的数组进行一次内存重新分配：</p><blockquote><p>如果是增长字符串，那么在执行这个操作之前，需要通过内存重新分配来扩展底层数组的大小，否则就会造成 缓冲区溢出</p></blockquote><blockquote><p>如果是缩短字符串，那么在执行这个操作之后，需要通过内存重新分配来释放字符串不再使用的那部分空间，否则就会造成 内存泄露</p></blockquote><p>每一次内存分配，都是比较耗时的操作，涉及到复杂的算法和内存的IO，如果出于性能的考虑，就要更可能少的去做这样的事情。</p><p>作者的初衷，相信也是将 Redis 定位成更高效，性能更好的NoSQL。为了优化 这种缺陷，sds做了预分配和惰性释放来分别应对这两种内存重新分配的情况。</p><ol><li>空间预分配</li></ol><p>空间预分配主要作用于 sds 字符串增长操作，通过 API <code>sdsMakeRoomFor</code> 来重新计算分配空间，具体规则在 src/sds.c 210行：</p><pre><code class="angular2html">if (newlen &lt; SDS_MAX_PREALLOC)    newlen *= 2;else    newlen += SDS_MAX_PREALLOC;</code></pre><p>总结一下就是：如果新的字符串大小 <strong>小于</strong> 1MB，那么会分配 2倍的新的字符串的大小，即 <code>newlen *= 2</code>，buf 的大小则为 <code>newlen * 2 + 1</code>，一字节用来存结尾空字符 “\0”；如果新字符串的长度 <strong>大于</strong> 1MB，那么会分配 新字符串大小 + 1MB，即 <code>newlen += SDS_MAX_PREALLOC</code>。</p><p>这样做的话，会将原本增长N次，便会重新进行N次内存分配，变成了，最多会重新分配内存N次，就是说，如果一次预分配后的大小，满足 sds 修改后的大小，就不需要再对内存重新分配，直接增长即可。</p><ol start="2"><li>空间惰性释放</li></ol><p>空间惰性释放是指缩短 sds 时，不是立即使用内存重新分配来回收缩短后多出来的空间，而是继续保留，以便将来使用。<br>以 <code>sdstrim</code> 这个 api 为例，看下它的源码</p><pre><code class="angular2html">sds sdstrim(sds s, const char *cset) {    char *start, *end, *sp, *ep;    size_t len;    sp = start = s;    ep = end = s+sdslen(s)-1;    while(sp &lt;= end &amp;&amp; strchr(cset, *sp)) sp++;    while(ep &gt; sp &amp;&amp; strchr(cset, *ep)) ep--;    len = (sp &gt; ep) ? 0 : ((ep-sp)+1);    if (s != sp) memmove(s, sp, len);    s[len] = &#39;\0&#39;;    sdssetlen(s,len);    return s;}</code></pre><p>只做了 <code>memmove</code> 操作，并没有真正重新分配内存，倘若此时，需要执行 <code>sdscat</code>，拼接上一个较短字符串，就可以直接使用，避免了再次分配内存。</p><p>如果有需要，必须使用释放掉这部分内存，可以调用 <code>sdsRemoveFreeSpace</code> 来真正释放掉。</p><h3 id="二进制安全"><a href="#二进制安全" class="headerlink" title="二进制安全"></a>二进制安全</h3><p>我们都知道，C 字符串除了在末尾的空字符外，其他位置不允许有空字符，否则最先被读到的空字符，就会被误认为是字符串结尾。这样限制了只能存储纯文本内容，不能保存二进制数据。</p><p>sds 就不会有这样的要求，它可以满足你存储任何数据，即使字符串中间有空字符也不受影响，因为它有 len 来表示字符串是否结尾。sds 所有 API 都是二进制安全的，和 C 字符串一样，是以空字符结尾，因此可以复用 C 字符串的一些函数。</p><p>以上就是我对 sds 字符串的认识，觉得作者真的是非常用心的设计，既遵循了规范，并且还有很好的优化点在里面，越来越有兴趣继续研究下去了~</p>]]></content>
-    
-    <summary type="html">
-    
-      
-      
-        &lt;p&gt;Redis 的作者 &lt;code&gt;antirez&lt;/code&gt; 在前些日子，通过博客文章《&lt;a href=&quot;http://antirez.com/news/110&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt; The first release candi
       
     
     </summary>
