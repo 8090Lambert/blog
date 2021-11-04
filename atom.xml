@@ -6,7 +6,7 @@
   <link href="/atom.xml" rel="self"/>
   
   <link href="http://8090lambert.cn/"/>
-  <updated>2021-11-03T04:04:31.554Z</updated>
+  <updated>2021-11-04T09:58:13.279Z</updated>
   <id>http://8090lambert.cn/</id>
   
   <author>
@@ -15,6 +15,29 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title>LSMTree结构理解</title>
+    <link href="http://8090lambert.cn/2021/08/03/LSMTree%E7%BB%93%E6%9E%84%E7%90%86%E8%A7%A3/"/>
+    <id>http://8090lambert.cn/2021/08/03/LSMTree结构理解/</id>
+    <published>2021-08-03T09:35:42.000Z</published>
+    <updated>2021-11-04T09:58:13.279Z</updated>
+    
+    <content type="html"><![CDATA[<p>LSM-Tree 结构的存储系统，将离散的随机写请求，通过WAL + Compaction机制变为批量的顺序写请求，<br>提升写入性能。但是，多个level、每层多个SST文件的架构也存在一些问题：</p><ul><li>读放大：当查询一个key时，需要遵循从新到旧的查找过程，直到找到想要的数据。虽然有全局manifest文件索引、<br>每个SSTable还有Bloom filter，但是逐层的步骤不可避免，这个过程可能需要不止一次的磁盘IO，尤其是做query range时，影响更明显；</li><li>空间放大：所有写入都是顺序写，修改和删除操作也是通过写入新的 SN 来实现，所以无效数据不会随着delete一起立即删除，<br>而是在compaction时实现物理删除；</li><li>写放大：每层level，在SSTable数量到达一定阈值时，会发生compation操作（本层和下一层中的相同key如果有重叠，<br>会进行排序后的重写）</li></ul><h3 id="整体结构"><a href="#整体结构" class="headerlink" title="整体结构"></a>整体结构</h3><p>每一个 Record 由 &lt;Key, SN(Sequence Number), ValueType, Value&gt; 四部分组成。SN 是在写入数据时生成的一个全局递增的整数，<br>ValueType 表明这个 Record 是否为有效的 Record。 Record 被分为多层保存，从 Level 0 开始到 Level N。除 Level 0 外，<br>每一个 Level 内的 Record 都是有序的，且被分别保存在多个文件中，每个文件被称作一个 SStable。</p><h3 id="写入流程："><a href="#写入流程：" class="headerlink" title="写入流程："></a>写入流程：</h3><ul><li>生成一个新的SN.</li><li>将 Record 写入WAL（write ahead log），保证Crash Safe(Consistency Safe).</li><li>将 Record 写入内存中的 Memtable.  </li></ul><p>当 MemTable(可读可写) 中的数据量超过某个值(一般4MB)时，会变为 Immutable memtable(可读)。通过双buffer的机制，<br>有效减少了 MemTable 在写满时，由于flush到磁盘可能产生的阻塞问题。</p><h3 id="查询流程"><a href="#查询流程" class="headerlink" title="查询流程"></a>查询流程</h3><p>一般读取有两种方式：</p><ol><li>通过<code>get</code>接口读取数据.</li><li>创建一个<code>snapshot</code>，基于该<code>snapshot</code>调用get接口读取数据. </li></ol><p>这两种方式本质一样，都是快照读，第一种方式会先隐式的创建一个数据库当前状态的快照，然后基于这个快照再去调用<code>get</code>方法读.  </p><p>具体的步骤如下：</p><ul><li>在Memtable（skipList）中查找指定的key，若搜索到符合条件的key就结束查找；</li><li>在Immutable memtable（skipList）中查找指定的key，若搜索到符合条件的key就结束查找；</li><li>按照level0 -&gt; levelN的顺序在每层中的sstable文件中查找指定的key，若搜索到符合条件的数据项就结束查找  <blockquote><p>注意在每一层sstable中查找数据时，都是按序依次查找sstable的。<br>0层的文件比较特殊。由于0层的文件中可能存在key重合的情况，因此在0层中，文件编号大的sstable优先查找。理由是文件编号较大的sstable中存储的总是最新的数据。<br>非0层文件，一层中所有文件之间的key不重合，因此可以借助sstable的元数据（一个文件中最小与最大的key值）进行快速定位，每一层只需要查找一个sstable文件的内容。  </p></blockquote></li></ul><p>在memory db或者sstable的查找过程中，需要根据指定的序列号拼接一个internalKey，<strong>查找用户key一致，且seq号不大于指定seq</strong> 的数据.</p><h3 id="Compaction-压缩"><a href="#Compaction-压缩" class="headerlink" title="Compaction(压缩)"></a>Compaction(压缩)</h3><h4 id="Minor-Compaction"><a href="#Minor-Compaction" class="headerlink" title="Minor Compaction"></a>Minor Compaction</h4><p>是指将内存中 Immutable memtable 的数据持久化为 0 层的 sstable 文件的过程，若干个0层文件中key是可能存在 overlap 的。<br>是一个时效性非常高的操作，要求在尽可能短的时间内完成，否则会阻塞正常的写入操作。minor compaction 的优先级高于 major compaction，<br>当同时发生时，会暂停 major compaction。 minor compaction 操作重写文件会带来很大的带宽压力以及短时间IO压力。 因此可以认为，<br>它就是使用短时间的IO消耗以及带宽消耗换取后续查询的低延迟。</p><h4 id="Major-Compaction"><a href="#Major-Compaction" class="headerlink" title="Major Compaction"></a>Major Compaction</h4><p>对相邻两个层的 sstable 进行多路归并排序，对文件中的 key 重新排序，过滤掉冗余版本后（视情况决定是否删除原文件），重新生成新的 sstable 的过程。</p><p>一次读取需要在内存中进行效率为O（log n）的查询。 若没有在内存中命中，则需要从 sstable 文件中查找。因为0层可能存在overlap，最差情况需要遍历0层所有文件。<br>随着运行时间的增长，minor compaction 导致 0 层文件的个数会越来越多，查询效率也会越来越低，这显然是不能接受的。 因此，需要 major compaction 机制通过将0层中的文件，<br>合并为若干个没有数据重叠的1层文件，一次的查找过程就可以进行优化。 compaction 归并的一个原因就是为了提高读取的效率，优化读放大问题。</p><p>一般 major compaction 的触发机制需要满足这几个条件：</p><ul><li>当0层文件数超过预定的上限（默认为4个）</li><li>当 i 层文件的总大小超过(10 ^ i) MB</li><li>当某个文件无效读取的次数过多</li></ul><p>因为 major compaction 是为了解决 0层文件过多导致读取效率低，但是如果仅关注 i 层的文件个数，在多次major compaction后，i+1 层会发生同样的问题，<br>因此需要对每层的文件总数设定阈值。在某层文件个数达到阈值时，启动major compaction，提升读取效率，并且降低后续 compaction 的IO开销。</p><p>上述的机制可以保证合并的进行，但仍存在一种极端问题：当i层合并完成之后，i+1层的文件同时达到数据上限，更糟糕的是，最差情况下0-&gt;n层都会发生连锁更新。<br>因此在合并时增加了这样两种机制：</p><h5 id="错峰合并"><a href="#错峰合并" class="headerlink" title="错峰合并"></a>错峰合并</h5><ol><li>一个文件一个查询的开销为10ms，若某个文件的查询次数过多，且查询在该文件中不命中，那么这种行为就可以视为无效查询开销</li><li>一个1MB的文件，其合并的开销为25ms。因此当一个1MB文件的文件无效查询超过25次时，对其合并</li></ol><h5 id="采样探测"><a href="#采样探测" class="headerlink" title="采样探测"></a>采样探测</h5><p>在sstable文件的metadata中，有一个额外的字段seekLeft，默认为文件的大小除以16kb。采样的过程：<br>记录本次访问的第一个sstable文件，如果在该文件中访问命中，则不做任何处理；若未命中，对该文件的seekLeft标志做减一操作。<br>seekLeft标志减少到0时，触发对该文件的错峰合并。</p><h5 id="最终目标"><a href="#最终目标" class="headerlink" title="最终目标"></a>最终目标</h5><p>Compaction 的设计一方面需要保证Compaction的基本效果，另一方面又不会带来严重的IO压力。<br>然而，并没有一种设计策略能够适用于所有应用场景或所有数据集。Compaction选择什么样的策略需要根据不同的业务场景、不同数据集特征进行确定。<br>设计Compaction策略需要根据业务数据特点，目标就是降低读、写、空间三者的放大，不断权衡如下几点：</p><ul><li>合理控制读放大：避免因Minor Freeze增多导致读取时延出现明显增大，避免请求读取过多SSTable；</li><li>合理控制写放大：避免一次又一次地Compact相同的数据；</li><li>合理控制空间放大：避免让不需要的多版本数据，已经删除的数据和过期的数据长时间占据存储空间，避免在Compaction过程中占用过多临时存储空间，<br>及时释放已经Compact完成的无用SSTable的存储空间；</li></ul><h4 id="Compaction流程"><a href="#Compaction流程" class="headerlink" title="Compaction流程"></a>Compaction流程</h4><p>压缩整体过程分为这几步：</p><ol><li>寻找合适的输入文件</li><li>扩大输入文件集合</li><li>多路合并</li></ol><h5 id="寻找输入文件"><a href="#寻找输入文件" class="headerlink" title="寻找输入文件"></a>寻找输入文件</h5><ul><li>对于 0 层文件数过多引发的合并场景或由于 i 层文件总量过大的合并场景，采用轮转的方法选择起始输入文件，记录了上一次该层合并的文件的最大key，<br>下一次则选择在此key之后的首个文件。</li><li>对于错峰合并，起始输入文件则为该查询次数过多的文件。</li></ul><h5 id="扩大输入文件集合"><a href="#扩大输入文件集合" class="headerlink" title="扩大输入文件集合"></a>扩大输入文件集合</h5><ol><li>在 i 层确定起始输入文件。</li><li>在 i 层中，查找与起始输入文件有key重叠的文件（这种情况一般发生在0层），构成 i 层的输入文件，结果为红线标注的文件。</li><li>利用 i 层的输入文件，在 i+1 层寻找有 key 重叠的文件，构成 i、i+1层的输入文件，结果为绿线标注的文件。</li><li>利用两层的输入文件，在不扩大 i+1 层输入文件的前提下，查找 i 层有key重叠的文件，构成最终全部的输入文件，结果为蓝线标注的文件。<br><img src="http://8090lambert.cn/images/blog/lsmtree/expand_collect.jpg" alt="expand_collect"></li></ol><h5 id="多路合并"><a href="#多路合并" class="headerlink" title="多路合并"></a>多路合并</h5><p>将输入文件内所有的数据项，按序排列之后，输出到 i+1 层的若干个新文件中。在合并的过程中，相同key的冗余数据，仅保留最新版本的那一份。<br>如果文件中存在某些仍在使用的旧版本数据，此时不能立即删除，需要等到使用结束，释放文件句柄后，根据引用计数来清除。</p>]]></content>
+    
+    <summary type="html">
+    
+      
+      
+        &lt;p&gt;LSM-Tree 结构的存储系统，将离散的随机写请求，通过WAL + Compaction机制变为批量的顺序写请求，&lt;br&gt;提升写入性能。但是，多个level、每层多个SST文件的架构也存在一些问题：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;读放大：当查询一个key时，需要遵循从新到旧的
+      
+    
+    </summary>
+    
+    
+  </entry>
   
   <entry>
     <title>sync.Pool原理解析</title>
@@ -454,30 +477,6 @@
     
     
       <category term="redis" scheme="http://8090lambert.cn/tags/redis/"/>
-    
-  </entry>
-  
-  <entry>
-    <title>PHP序列化的漏洞</title>
-    <link href="http://8090lambert.cn/2017/02/18/PHP%E5%BA%8F%E5%88%97%E5%8C%96%E7%9A%84%E6%BC%8F%E6%B4%9E/"/>
-    <id>http://8090lambert.cn/2017/02/18/PHP序列化的漏洞/</id>
-    <published>2017-02-18T09:04:19.000Z</published>
-    <updated>2021-05-09T14:50:16.593Z</updated>
-    
-    <content type="html"><![CDATA[<h2 id="0-前言"><a href="#0-前言" class="headerlink" title="0.前言"></a>0.前言</h2><p>对象的序列化和反序列化作用就不再赘述,php中序列化的结果是一个php自定义的字符串格式,有点类似json.</p><p>我们在任何语言中设计对象的序列化和反序列化都需要解决几个问题</p><p>把某个对象序列化之后,序列化的结果有自描述的功能(从序列化的结果中知道这个对象的具体类型,<br>知道类型还不够,当然还需要知道这个类型所对应具体的值).</p><p>时间性能问题:在某些性能敏感的场景下,对象序列化就不能拖后腿,例如:高性能服务(我经常使用protobuf来序列化).</p><p>空间性能问题:序列化之后的结果不能太长,比如内存中一个int对象,序列化之后数据长度变成了10倍int的长度,那这个序列化算法是有问题的.</p><p>本文仅仅从php代码角度来解释php中序列化和反序列化的过程.,记住一点序列化和反序列化操作的仅仅是对象的数据,这一点有面向对象开发经验的都应该容易理解.</p><h3 id="1-序列化serialize和反序列化方法unserialize"><a href="#1-序列化serialize和反序列化方法unserialize" class="headerlink" title="1.序列化serialize和反序列化方法unserialize"></a>1.序列化serialize和反序列化方法unserialize</h3><p>php原生提供了对象序列化功能. 用起来也非常简单,就两个接口.</p><pre><code class="php">class fobnn{    public  $hack_id;    private $hack_name;    public function __construct($name,$id)    {        $this-&gt;hack_name = $name;        $this-&gt;hack_id = $id;    }    public function print()    {        echo $this-&gt;hack_name.PHP_EOL;    }}$obj = new fobnn(&#39;fobnn&#39;,1);$obj-&gt;print();$serializedstr = serialize($obj); //通过serialize接口序列化echo $serializedstr.PHP_EOL;;$toobj = unserialize($serializedstr);//通过unserialize反序列化$toobj-&gt;print();</code></pre><pre><code class="php">fobnnO:5:&quot;fobnn&quot;:2:{s:7:&quot;hack_id&quot;;i:1;s:16:&quot;fobnnhack_name&quot;;s:5:&quot;fobnn&quot;;}fobnn</code></pre><p>看到第二行的输出,这个字符串就是序列化的结果,这个结构其实很容读懂,可以发现是通过对象名称/成员名称来映射的,当然不同访问权限的成员序列化之后的标签名称略有不同.</p><p>根据我上面讲到的3个问题,那么我们可以来看看</p><p>1.自描述功能 </p><pre><code class="php"> O:5:&quot;fobnn&quot;:2 </code></pre><p>其中o就表示了 object 类型,且类型名称为fobnn, 采用这种格式,后面的2表示了有2个成员对象.</p><p>关于成员对象,其实也是同一套子描述,这是一个递归的定义.</p><p>自描述的功能主要是通过字符串记录对象和成员的名称来实现.</p><p>2.性能问题</p><p>php序列化的时间性能本文就不分析了,详见后面,但序列化结果其实类似json/bson定义的协议,有协议头,协议头说明了类型,协议体则说明了类型所对应的值,并不会对序列化结果进行压缩.</p><h3 id="2-反序列化中的魔术方法"><a href="#2-反序列化中的魔术方法" class="headerlink" title="2.反序列化中的魔术方法"></a>2.反序列化中的魔术方法</h3><p>对应上述说的第二个问题,其实php中也有解决方法,一种是通过魔术方法,第二种则是自定义序列化函数.先来介绍下魔术方法  <strong>sleep 和 </strong>wakeup  </p><blockquote><p><a href="http://php.net/manual/en/language.oop5.magic.php#object.sleep" target="_blank" rel="noopener">http://php.net/manual/en/language.oop5.magic.php#object.sleep</a><br><a href="http://php.net/manual/en/language.oop5.magic.php#object.wakeup" target="_blank" rel="noopener">http://php.net/manual/en/language.oop5.magic.php#object.wakeup</a></p></blockquote><pre><code class="php">class fobnn{    public  $hack_id;    private $hack_name;    public function __construct($name,$id)    {        $this-&gt;hack_name = $name;        $this-&gt;hack_id = $id;    }    public function print()    {        echo $this-&gt;hack_name.PHP_EOL;    }    public  function __sleep()    {        return array(&quot;hack_name&quot;);    }    public  function __wakeup()    {        $this-&gt;hack_name = &#39;haha&#39;;    }}$obj = new fobnn(&#39;fobnn&#39;,1);$obj-&gt;print();$serializedstr = serialize($obj);echo $serializedstr.PHP_EOL;;$toobj = unserialize($serializedstr);$toobj-&gt;print();</code></pre><pre><code class="php">fobnnO:5:&quot;fobnn&quot;:1:{s:16:&quot;fobnnhack_name&quot;;s:5:&quot;fobnn&quot;;}haha</code></pre><p>在序列化之前会先调用 __sleep 返回的是一个需要序列化的成员名称数组,通过这样我们就可以控制需要序列化的数据,案例中我只返回了hack_name,可以看到结果中只序列化了hack_name成员.</p><p>在序列化完成之后,会跳用 __wakeup 在这里我们可以做一些后续工作,例如重连数据库之类的.  </p><h3 id="3-自定义Serializable接口"><a href="#3-自定义Serializable接口" class="headerlink" title="3.自定义Serializable接口"></a>3.自定义Serializable接口</h3><p>自定义序列化接口 <a href="http://php.net/manual/en/class.serializable.php" target="_blank" rel="noopener">http://php.net/manual/en/class.serializable.php</a></p><pre><code class="php">interface Serializable {abstract public function serialize()abstract public function unserialize(string $serialized)}</code></pre><p>通过这个接口我们可以自定义序列化和反序列化的行为,这个功能主要可以用来自定义我们的序列化格式.</p><pre><code class="php">class fobnn implements Serializable{    public  $hack_id;    private $hack_name;    public function __construct($name,$id)    {        $this-&gt;hack_name = $name;        $this-&gt;hack_id = $id;    }    public function print()    {        echo $this-&gt;hack_name.PHP_EOL;    }    public  function __sleep()    {        return array(&#39;hack_name&#39;);    }    public  function __wakeup()    {        $this-&gt;hack_name = &#39;haha&#39;;    }    public function serialize()    {        return json_encode(array(&#39;id&#39; =&gt; $this-&gt;hack_id ,&#39;name&#39;=&gt;$this-&gt;hack_name ));    }    public function unserialize($var)    {        $array = json_decode($var,true);        $this-&gt;hack_name = $array[&#39;name&#39;];        $this-&gt;hack_id = $array[&#39;id&#39;];    }}$obj = new fobnn(&#39;fobnn&#39;,1);$obj-&gt;print();$serializedstr = serialize($obj);echo $serializedstr.PHP_EOL;;$toobj = unserialize($serializedstr);$toobj-&gt;print();</code></pre><pre><code class="php">fobnnC:5:&quot;fobnn&quot;:23:{{"id":1,"name":"fobnn"}}fobnn</code></pre><p>当使用了自定义序列化接口之后,我们的魔术方法就没用了.</p><h3 id="4-PHP动态类型和PHP反序列化"><a href="#4-PHP动态类型和PHP反序列化" class="headerlink" title="4.PHP动态类型和PHP反序列化"></a>4.PHP动态类型和PHP反序列化</h3><p>既然上文中提到的自描述功能,那么序列化结果中保存了对象的类型,且php是动态类型语言,那么我们就可以来做个简单的实验.</p><pre><code class="php">class fobnn{    public $hack_id;    public $hack_name;    public function __construct($name,$id)    {        $this-&gt;hack_name = $name;        $this-&gt;hack_id = $id;    }    public function print()    {        var_dump($this-&gt;hack_name);    }}$obj = new fobnn(&#39;fobnn&#39;,1);$obj-&gt;print();$serializedstr = serialize($obj);echo $serializedstr.PHP_EOL;;$toobj = unserialize($serializedstr);$toobj-&gt;print();$toobj2 = unserialize(&quot;O:5:\&quot;fobnn\&quot;:2:{s:7:\&quot;hack_id\&quot;;i:1;s:9:\&quot;hack_name\&quot;;i:12345;}&quot;);$toobj2-&gt;print();</code></pre><p>我们修改hack_name反序列化的结果为int类型，<code>i:12345</code>，结果如下：</p><blockquote><p>string(5) “fobnn”<br>O:5:”fobnn”:2:{s:7:”hack_id”;i:1;s:9:”hack_name”;s:5:”fobnn”;}<br>string(5) “fobnn”<br>int(12345)</p></blockquote><p>可以发现,对象成功序列化回来了!并且可以正常工作!. 当然php的这种机制提供了灵活多变的语法,但也引入了安全风险. 后续继续分析php序列化和反序列化特性带来的安全问题.</p>]]></content>
-    
-    <summary type="html">
-    
-      
-      
-        &lt;h2 id=&quot;0-前言&quot;&gt;&lt;a href=&quot;#0-前言&quot; class=&quot;headerlink&quot; title=&quot;0.前言&quot;&gt;&lt;/a&gt;0.前言&lt;/h2&gt;&lt;p&gt;对象的序列化和反序列化作用就不再赘述,php中序列化的结果是一个php自定义的字符串格式,有点类似json.&lt;/p&gt;
-&lt;p&gt;
-      
-    
-    </summary>
-    
-    
-      <category term="php" scheme="http://8090lambert.cn/tags/php/"/>
     
   </entry>
   
